@@ -26,16 +26,19 @@ type RulesAcknowledgementRow = {
 };
 
 type RulesGateStatus = 'checking' | 'open' | 'required';
+type AuthStatus = 'checking' | 'authenticated' | 'anonymous' | 'local';
 
 export function AppLayout() {
   const [canSeeAdmin, setCanSeeAdmin] = useState(false);
   const [rulesGateStatus, setRulesGateStatus] = useState<RulesGateStatus>(isSupabaseConfigured ? 'checking' : 'open');
+  const [authStatus, setAuthStatus] = useState<AuthStatus>(isSupabaseConfigured ? 'checking' : 'local');
   const location = useLocation();
 
   useEffect(() => {
     if (!isSupabaseConfigured || !supabase) {
       setCanSeeAdmin(false);
       setRulesGateStatus('open');
+      setAuthStatus('local');
       return;
     }
 
@@ -43,6 +46,7 @@ export function AppLayout() {
 
     async function loadUserState() {
       setRulesGateStatus('checking');
+      setAuthStatus('checking');
 
       const { data: userResult } = await supabase!.auth.getUser();
       if (!isMounted) return;
@@ -50,8 +54,11 @@ export function AppLayout() {
       if (!userResult.user) {
         setCanSeeAdmin(false);
         setRulesGateStatus('open');
+        setAuthStatus('anonymous');
         return;
       }
+
+      setAuthStatus('authenticated');
 
       const [{ data: profile }, { data: rulesRow, error: rulesError }, { data: ackRow, error: ackError }] = await Promise.all([
         supabase!.from('profiles').select('is_admin').eq('id', userResult.user.id).single(),
@@ -90,8 +97,21 @@ export function AppLayout() {
     await supabase?.auth.signOut();
     setCanSeeAdmin(false);
     setRulesGateStatus('open');
+    setAuthStatus(isSupabaseConfigured ? 'anonymous' : 'local');
   };
 
+  if (import.meta.env.PROD && !isSupabaseConfigured) {
+    return (
+      <main className="auth-page">
+        <section className="auth-card">
+          <h1>Configuración pendiente</h1>
+          <p className="empty-state">Faltan las variables de Supabase en el despliegue. La porra privada no está disponible todavía.</p>
+        </section>
+      </main>
+    );
+  }
+
+  const mustSignIn = isSupabaseConfigured && authStatus === 'anonymous';
   const mustReadRules = rulesGateStatus === 'required' && location.pathname !== '/reglas';
 
   return (
@@ -120,8 +140,10 @@ export function AppLayout() {
         </div>
       </aside>
       <main className="main-content">
-        {rulesGateStatus === 'checking' ? (
-          <p className="empty-state">Comprobando reglas...</p>
+        {authStatus === 'checking' || rulesGateStatus === 'checking' ? (
+          <p className="empty-state">Comprobando sesión...</p>
+        ) : mustSignIn ? (
+          <Navigate to="/auth" replace state={{ from: location.pathname }} />
         ) : mustReadRules ? (
           <Navigate to="/reglas" replace state={{ from: location.pathname }} />
         ) : (

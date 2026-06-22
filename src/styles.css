@@ -283,6 +283,32 @@ a {
   font-size: 0.92rem;
 }
 
+.match-card__prediction {
+  border-radius: 8px;
+  background: #f4f7f5;
+  padding: 8px 10px;
+  color: #405048;
+  font-weight: 800;
+}
+
+.match-card__prediction--draft {
+  border: 1px solid #cdd7d1;
+  background: #ffffff;
+  color: #405048;
+}
+
+.match-card__prediction--modified {
+  border: 1px solid #e2b046;
+  background: #fff7e1;
+  color: #735018;
+}
+
+.match-card__prediction--saved {
+  border: 1px solid #8dc6a4;
+  background: #eaf7ef;
+  color: #1f6a3e;
+}
+
 .status-pill {
   border-radius: 999px;
   padding: 4px 9px;

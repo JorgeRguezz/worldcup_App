@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { isSupabaseConfigured, supabase } from '../../lib/supabase';
 
 export function AuthPage() {
@@ -10,7 +10,16 @@ export function AuthPage() {
   const [displayName, setDisplayName] = useState('');
   const [message, setMessage] = useState('');
 
-  if (!isSupabaseConfigured) return <Navigate to="/" replace />;
+  if (!isSupabaseConfigured) {
+    return (
+      <main className="auth-page">
+        <section className="auth-card">
+          <h1>Configuración pendiente</h1>
+          <p className="empty-state">Faltan las variables de Supabase. No se puede iniciar sesión todavía.</p>
+        </section>
+      </main>
+    );
+  }
 
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();

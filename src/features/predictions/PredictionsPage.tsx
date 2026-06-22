@@ -1,4 +1,4 @@
-import { CheckCircle } from 'lucide-react';
+import { PencilLine, Save } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { MatchCard } from '../../components/MatchCard';
@@ -127,6 +127,7 @@ export function PredictionsPage() {
   const [userId, setUserId] = useState<string | null>(null);
   const [matches, setMatches] = useState<Match[]>(isSupabaseConfigured ? [] : demoMatches);
   const [drafts, setDrafts] = useState<Record<string, DraftPrediction>>({});
+  const [savedPredictions, setSavedPredictions] = useState<Record<string, DraftPrediction>>({});
   const [isLoading, setIsLoading] = useState(isSupabaseConfigured);
   const [isSaving, setIsSaving] = useState(false);
   const [savingMatchId, setSavingMatchId] = useState<string | null>(null);
@@ -191,6 +192,7 @@ export function PredictionsPage() {
           ]),
         );
         setDrafts(nextDrafts);
+        setSavedPredictions(nextDrafts);
       }
 
       setIsLoading(false);
@@ -261,10 +263,28 @@ export function PredictionsPage() {
     teamProfileRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, [selectedTeamId]);
 
+  const isSameAsSaved = (matchId: string, draft: DraftPrediction | undefined): boolean => {
+    const saved = savedPredictions[matchId];
+    return Boolean(
+      saved &&
+        draft &&
+        draft.home === saved.home &&
+        draft.away === saved.away &&
+        (draft.advancingTeamId || '') === (saved.advancingTeamId || ''),
+    );
+  };
+
+  const toSavedDraft = (row: PredictionUpsertRow, points = 0): DraftPrediction => ({
+    home: String(row.predicted_home_score),
+    away: String(row.predicted_away_score),
+    advancingTeamId: row.predicted_advancing_team_id ?? '',
+    points,
+  });
+
   const buildPredictionRow = (match: Match, draft: DraftPrediction | undefined, currentUserId: string): PredictionUpsertRow | string => {
-    if (isLocked(match)) return `El partido M${match.fifaMatchNumber} ya empezó y no se puede verificar.`;
+    if (isLocked(match)) return `El partido M${match.fifaMatchNumber} ya empezó y no se puede guardar.`;
     if (!match.homeTeamId || !match.awayTeamId) return `El partido M${match.fifaMatchNumber} todavía no tiene equipos definidos.`;
-    if (!isCompleteDraft(draft)) return `Completa el marcador del partido M${match.fifaMatchNumber} antes de verificar.`;
+    if (!isCompleteDraft(draft)) return `Completa el marcador del partido M${match.fifaMatchNumber} antes de guardar.`;
 
     const home = Number(draft.home);
     const away = Number(draft.away);
@@ -286,14 +306,14 @@ export function PredictionsPage() {
     };
   };
 
-  const verifyPrediction = async (match: Match) => {
+  const savePrediction = async (match: Match) => {
     if (!isSupabaseConfigured || !supabase) {
       setMessage('Configura Supabase para guardar predicciones reales.');
       return;
     }
 
     if (!userId) {
-      setMessage('Inicia sesión antes de verificar predicciones.');
+      setMessage('Inicia sesión antes de guardar predicciones.');
       return;
     }
 
@@ -303,6 +323,7 @@ export function PredictionsPage() {
       return;
     }
 
+    const wasSaved = Boolean(savedPredictions[match.id]);
     setSavingMatchId(match.id);
     setMessage('');
 
@@ -311,7 +332,16 @@ export function PredictionsPage() {
     });
 
     setSavingMatchId(null);
-    setMessage(error ? `No se pudo verificar: ${error.message}` : `Predicción M${match.fifaMatchNumber} verificada.`);
+    if (error) {
+      setMessage(`No se pudo guardar: ${error.message}`);
+      return;
+    }
+
+    setSavedPredictions((current) => ({
+      ...current,
+      [match.id]: toSavedDraft(row, drafts[match.id]?.points ?? 0),
+    }));
+    setMessage(wasSaved ? `Apuesta M${match.fifaMatchNumber} modificada.` : `Apuesta M${match.fifaMatchNumber} guardada.`);
   };
 
   const savePredictions = async () => {
@@ -349,7 +379,16 @@ export function PredictionsPage() {
     });
 
     setIsSaving(false);
-    setMessage(error ? `No se pudo guardar: ${error.message}` : 'Predicciones guardadas.');
+    if (error) {
+      setMessage(`No se pudo guardar: ${error.message}`);
+      return;
+    }
+
+    setSavedPredictions((current) => ({
+      ...current,
+      ...Object.fromEntries(rows.map((row) => [row.match_id, toSavedDraft(row, drafts[row.match_id]?.points ?? 0)])),
+    }));
+    setMessage('Predicciones guardadas.');
   };
 
   if (isSupabaseConfigured && !isLoading && !userId) {
@@ -376,16 +415,20 @@ export function PredictionsPage() {
     const locked = isLocked(match);
     const disabled = locked || !match.homeTeamId || !match.awayTeamId;
     const isSubmitting = savingMatchId === match.id;
-    const canVerify = !disabled && isCompleteDraft(draft) && !isSaving && !savingMatchId;
-    const predictionForCard =
-      draft && draft.home !== '' && draft.away !== ''
-        ? { home: Number(draft.home), away: Number(draft.away), points: draft.points }
-        : undefined;
+    const canSave = !disabled && isCompleteDraft(draft) && !isSaving && !savingMatchId;
+    const savedDraft = savedPredictions[match.id];
+    const hasSavedPrediction = Boolean(savedDraft);
+    const isSavedDraft = isSameAsSaved(match.id, draft);
+    const predictionStatus = hasSavedPrediction ? (isSavedDraft ? 'saved' : 'modified') : isCompleteDraft(draft) ? 'draft' : undefined;
+    const displayPrediction = isCompleteDraft(draft) ? draft : savedDraft;
+    const predictionForCard = displayPrediction
+      ? { home: Number(displayPrediction.home), away: Number(displayPrediction.away), points: displayPrediction.points }
+      : undefined;
     const isKnockoutDraw = match.stage !== 'GROUP' && draft !== undefined && draft.home !== '' && draft.away !== '' && draft.home === draft.away;
 
     return (
       <div className="prediction-editor" key={match.id}>
-        <MatchCard match={match} prediction={predictionForCard} onTeamClick={showTeamProfile} />
+        <MatchCard match={match} prediction={predictionForCard} predictionStatus={predictionStatus} onTeamClick={showTeamProfile} />
         <div className="score-inputs" aria-label={`Predicción M${match.fifaMatchNumber}`}>
           <input
             type="number"
@@ -421,11 +464,11 @@ export function PredictionsPage() {
         <button
           className="primary-button prediction-submit"
           type="button"
-          disabled={!canVerify}
-          onClick={() => void verifyPrediction(match)}
+          disabled={!canSave}
+          onClick={() => void savePrediction(match)}
         >
-          <CheckCircle size={16} />
-          {isSubmitting ? 'Verificando...' : 'Verificar'}
+          {hasSavedPrediction ? <PencilLine size={16} /> : <Save size={16} />}
+          {hasSavedPrediction ? (isSubmitting ? 'Modificando...' : 'Modificar apuesta') : isSubmitting ? 'Guardando...' : 'Guardar apuesta'}
         </button>
       </div>
     );
@@ -439,8 +482,8 @@ export function PredictionsPage() {
           <h1>Mis predicciones</h1>
         </div>
         <button className="primary-button" type="button" onClick={savePredictions} disabled={isSaving || isLoading}>
-          <CheckCircle size={16} />
-          {isSaving ? 'Verificando...' : 'Verificar cambios'}
+          <Save size={16} />
+          {isSaving ? 'Guardando...' : 'Guardar cambios'}
         </button>
       </div>
 

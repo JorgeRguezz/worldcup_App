@@ -7,6 +7,7 @@ import { StatusPill } from './StatusPill';
 type MatchCardProps = {
   match: Match;
   prediction?: { home: number; away: number; points: number };
+  predictionStatus?: 'draft' | 'modified' | 'saved';
   onTeamClick?: (teamId: string) => void;
 };
 
@@ -26,10 +27,18 @@ function TeamLabel({
   );
 }
 
-export function MatchCard({ match, prediction, onTeamClick }: MatchCardProps) {
+export function MatchCard({ match, prediction, predictionStatus, onTeamClick }: MatchCardProps) {
   const isLocked = new Date(match.kickoffAt).getTime() <= Date.now();
   const tone = match.status === 'FINAL' ? 'good' : isLocked ? 'danger' : 'warn';
   const label = match.status === 'FINAL' ? 'Finalizado' : isLocked ? 'Bloqueada' : 'Disponible';
+  const predictionLabel =
+    predictionStatus === 'saved'
+      ? 'Apuesta guardada'
+      : predictionStatus === 'modified'
+        ? 'Cambios sin guardar'
+        : predictionStatus === 'draft'
+          ? 'Lista para guardar'
+          : 'Tu predicción';
 
   return (
     <article className="match-card">
@@ -47,12 +56,12 @@ export function MatchCard({ match, prediction, onTeamClick }: MatchCardProps) {
         <span>{formatMadridDateTime(match.kickoffAt)}</span>
       </div>
       {prediction ? (
-        <div className="match-card__prediction">
-          Tu predicción: {prediction.home}-{prediction.away}
+        <div className={`match-card__prediction${predictionStatus ? ` match-card__prediction--${predictionStatus}` : ''}`}>
+          {predictionLabel}: {prediction.home}-{prediction.away}
           {match.status === 'FINAL' ? ` · ${prediction.points} pts` : ''}
         </div>
       ) : (
-        <div className="match-card__prediction">Sin predicción guardada</div>
+        <div className="match-card__prediction">Sin apuesta guardada</div>
       )}
     </article>
   );
