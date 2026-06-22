@@ -129,7 +129,6 @@ export function PredictionsPage() {
   const [drafts, setDrafts] = useState<Record<string, DraftPrediction>>({});
   const [savedPredictions, setSavedPredictions] = useState<Record<string, DraftPrediction>>({});
   const [isLoading, setIsLoading] = useState(isSupabaseConfigured);
-  const [isSaving, setIsSaving] = useState(false);
   const [savingMatchId, setSavingMatchId] = useState<string | null>(null);
   const [message, setMessage] = useState('');
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
@@ -226,17 +225,13 @@ export function PredictionsPage() {
 
     const today = orderedMatches.available.filter((match) => getPredictionDayKey(match.kickoffAt) === todayKey);
     const tomorrow = orderedMatches.available.filter((match) => getPredictionDayKey(match.kickoffAt) === tomorrowKey);
-    const future = orderedMatches.available.filter((match) => {
-      const predictionDayKey = getPredictionDayKey(match.kickoffAt);
-      return predictionDayKey !== todayKey && predictionDayKey !== tomorrowKey;
-    });
 
     return [
       { title: 'Hoy', matches: today },
       { title: 'Mañana', matches: tomorrow },
-      { title: 'Más adelante', matches: future },
     ].filter((bucket) => bucket.matches.length > 0);
   }, [orderedMatches.available]);
+  const availablePredictionMatches = useMemo(() => availableBuckets.flatMap((bucket) => bucket.matches), [availableBuckets]);
 
   const updateDraft = (matchId: string, patch: Partial<DraftPrediction>) => {
     setDrafts((current) => ({
@@ -344,53 +339,6 @@ export function PredictionsPage() {
     setMessage(wasSaved ? `Apuesta M${match.fifaMatchNumber} modificada.` : `Apuesta M${match.fifaMatchNumber} guardada.`);
   };
 
-  const savePredictions = async () => {
-    if (!isSupabaseConfigured || !supabase) {
-      setMessage('Configura Supabase para guardar predicciones reales.');
-      return;
-    }
-
-    if (!userId) {
-      setMessage('Inicia sesión antes de guardar predicciones.');
-      return;
-    }
-
-    const rows: PredictionUpsertRow[] = [];
-    for (const match of orderedMatches.available) {
-      if (!isCompleteDraft(drafts[match.id])) continue;
-      const row = buildPredictionRow(match, drafts[match.id], userId);
-      if (typeof row === 'string') {
-        setMessage(row);
-        return;
-      }
-      rows.push(row);
-    }
-
-    if (rows.length === 0) {
-      setMessage('No hay predicciones completas y editables para guardar.');
-      return;
-    }
-
-    setIsSaving(true);
-    setMessage('');
-
-    const { error } = await supabase.from('predictions').upsert(rows, {
-      onConflict: 'user_id,match_id',
-    });
-
-    setIsSaving(false);
-    if (error) {
-      setMessage(`No se pudo guardar: ${error.message}`);
-      return;
-    }
-
-    setSavedPredictions((current) => ({
-      ...current,
-      ...Object.fromEntries(rows.map((row) => [row.match_id, toSavedDraft(row, drafts[row.match_id]?.points ?? 0)])),
-    }));
-    setMessage('Predicciones guardadas.');
-  };
-
   if (isSupabaseConfigured && !isLoading && !userId) {
     return (
       <section className="page">
@@ -410,66 +358,84 @@ export function PredictionsPage() {
     );
   }
 
-  const renderPredictionEditor = (match: Match) => {
+  const renderPredictionEditor = (match: Match, readOnly = false) => {
     const draft = drafts[match.id];
     const locked = isLocked(match);
     const disabled = locked || !match.homeTeamId || !match.awayTeamId;
     const isSubmitting = savingMatchId === match.id;
-    const canSave = !disabled && isCompleteDraft(draft) && !isSaving && !savingMatchId;
+    const canSave = !disabled && isCompleteDraft(draft) && !savingMatchId;
     const savedDraft = savedPredictions[match.id];
     const hasSavedPrediction = Boolean(savedDraft);
+    const editorGlowClass = readOnly
+      ? ''
+      : hasSavedPrediction
+        ? ' prediction-editor--glow-saved'
+        : disabled
+          ? ''
+          : ' prediction-editor--glow-available';
     const isSavedDraft = isSameAsSaved(match.id, draft);
     const predictionStatus = hasSavedPrediction ? (isSavedDraft ? 'saved' : 'modified') : isCompleteDraft(draft) ? 'draft' : undefined;
     const displayPrediction = isCompleteDraft(draft) ? draft : savedDraft;
     const predictionForCard = displayPrediction
       ? { home: Number(displayPrediction.home), away: Number(displayPrediction.away), points: displayPrediction.points }
       : undefined;
+    const predictionResult = readOnly && predictionForCard ? (predictionForCard.points > 0 ? 'correct' : 'miss') : undefined;
     const isKnockoutDraw = match.stage !== 'GROUP' && draft !== undefined && draft.home !== '' && draft.away !== '' && draft.home === draft.away;
 
     return (
-      <div className="prediction-editor" key={match.id}>
-        <MatchCard match={match} prediction={predictionForCard} predictionStatus={predictionStatus} onTeamClick={showTeamProfile} />
-        <div className="score-inputs" aria-label={`Predicción M${match.fifaMatchNumber}`}>
-          <input
-            type="number"
-            min={0}
-            max={20}
-            placeholder="0"
-            value={draft?.home ?? ''}
-            disabled={disabled}
-            onChange={(event) => updateDraft(match.id, { home: event.target.value })}
-          />
-          <span>-</span>
-          <input
-            type="number"
-            min={0}
-            max={20}
-            placeholder="0"
-            value={draft?.away ?? ''}
-            disabled={disabled}
-            onChange={(event) => updateDraft(match.id, { away: event.target.value })}
-          />
-        </div>
-        {match.stage !== 'GROUP' ? (
-          <select
-            disabled={disabled || !isKnockoutDraw}
-            value={draft?.advancingTeamId ?? ''}
-            onChange={(event) => updateDraft(match.id, { advancingTeamId: event.target.value })}
-          >
-            <option value="">Equipo que avanza si hay empate</option>
-            {match.homeTeamId ? <option value={match.homeTeamId}>{teamName(match.homeTeamId)}</option> : null}
-            {match.awayTeamId ? <option value={match.awayTeamId}>{teamName(match.awayTeamId)}</option> : null}
-          </select>
-        ) : null}
-        <button
-          className="primary-button prediction-submit"
-          type="button"
-          disabled={!canSave}
-          onClick={() => void savePrediction(match)}
-        >
-          {hasSavedPrediction ? <PencilLine size={16} /> : <Save size={16} />}
-          {hasSavedPrediction ? (isSubmitting ? 'Modificando...' : 'Modificar apuesta') : isSubmitting ? 'Guardando...' : 'Guardar apuesta'}
-        </button>
+      <div className={`prediction-editor${editorGlowClass}`} key={match.id}>
+        <MatchCard
+          match={match}
+          prediction={predictionForCard}
+          predictionStatus={predictionStatus}
+          predictionResult={predictionResult}
+          onTeamClick={showTeamProfile}
+        />
+        {readOnly ? null : (
+          <>
+            <div className="score-inputs" aria-label={`Predicción M${match.fifaMatchNumber}`}>
+              <input
+                type="number"
+                min={0}
+                max={20}
+                placeholder="0"
+                value={draft?.home ?? ''}
+                disabled={disabled}
+                onChange={(event) => updateDraft(match.id, { home: event.target.value })}
+              />
+              <span>-</span>
+              <input
+                type="number"
+                min={0}
+                max={20}
+                placeholder="0"
+                value={draft?.away ?? ''}
+                disabled={disabled}
+                onChange={(event) => updateDraft(match.id, { away: event.target.value })}
+              />
+            </div>
+            {match.stage !== 'GROUP' ? (
+              <select
+                disabled={disabled || !isKnockoutDraw}
+                value={draft?.advancingTeamId ?? ''}
+                onChange={(event) => updateDraft(match.id, { advancingTeamId: event.target.value })}
+              >
+                <option value="">Equipo que avanza si hay empate</option>
+                {match.homeTeamId ? <option value={match.homeTeamId}>{teamName(match.homeTeamId)}</option> : null}
+                {match.awayTeamId ? <option value={match.awayTeamId}>{teamName(match.awayTeamId)}</option> : null}
+              </select>
+            ) : null}
+            <button
+              className="primary-button prediction-submit"
+              type="button"
+              disabled={!canSave}
+              onClick={() => void savePrediction(match)}
+            >
+              {hasSavedPrediction ? <PencilLine size={16} /> : <Save size={16} />}
+              {hasSavedPrediction ? (isSubmitting ? 'Modificando...' : 'Modificar apuesta') : isSubmitting ? 'Guardando...' : 'Guardar apuesta'}
+            </button>
+          </>
+        )}
       </div>
     );
   };
@@ -481,10 +447,6 @@ export function PredictionsPage() {
           <p className="eyebrow">Editables hasta el saque inicial</p>
           <h1>Mis predicciones</h1>
         </div>
-        <button className="primary-button" type="button" onClick={savePredictions} disabled={isSaving || isLoading}>
-          <Save size={16} />
-          {isSaving ? 'Guardando...' : 'Guardar cambios'}
-        </button>
       </div>
 
       {message ? <p className="form-message">{message}</p> : null}
@@ -499,7 +461,7 @@ export function PredictionsPage() {
       <section className="prediction-section">
         <div className="section-heading">
           <h2>Disponibles</h2>
-          <span>{orderedMatches.available.length}</span>
+          <span>{availablePredictionMatches.length}</span>
         </div>
         {availableBuckets.length > 0 ? (
           <div className="prediction-buckets">
@@ -509,7 +471,7 @@ export function PredictionsPage() {
                   <h3>{bucket.title}</h3>
                   <span>{bucket.matches.length}</span>
                 </div>
-                <div className="prediction-grid">{bucket.matches.map(renderPredictionEditor)}</div>
+                <div className="prediction-grid">{bucket.matches.map((match) => renderPredictionEditor(match))}</div>
               </section>
             ))}
           </div>
@@ -524,7 +486,7 @@ export function PredictionsPage() {
           <span>{orderedMatches.past.length}</span>
         </div>
         {orderedMatches.past.length > 0 ? (
-          <div className="prediction-grid">{orderedMatches.past.map(renderPredictionEditor)}</div>
+          <div className="prediction-grid">{orderedMatches.past.map((match) => renderPredictionEditor(match, true))}</div>
         ) : (
           <p className="empty-state">Todavía no hay predicciones pasadas.</p>
         )}

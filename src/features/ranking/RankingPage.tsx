@@ -93,7 +93,7 @@ export function RankingPage() {
   const rankedRows = useMemo(() => rankRows(rows), [rows]);
 
   return (
-    <section className="page">
+    <section className="page ranking-page">
       <div className="page-heading">
         <div>
           <p className="eyebrow">Puntos de partidos + especiales</p>

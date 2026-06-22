@@ -2,6 +2,10 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { isSupabaseConfigured, supabase } from '../../lib/supabase';
 
+function getAuthRedirectUrl(): string {
+  return `${window.location.origin}/auth`;
+}
+
 export function AuthPage() {
   const navigate = useNavigate();
   const [mode, setMode] = useState<'signin' | 'signup' | 'reset'>('signin');
@@ -35,14 +39,17 @@ export function AuthPage() {
       const { data, error } = await supabase!.auth.signUp({
         email,
         password,
-        options: { data: { display_name: displayName || email.split('@')[0] } },
+        options: {
+          data: { display_name: displayName || email.split('@')[0] },
+          emailRedirectTo: getAuthRedirectUrl(),
+        },
       });
       setMessage(error?.message ?? 'Cuenta creada. Revisa el correo si tu proyecto exige confirmación.');
       if (!error && data.session) navigate('/reglas', { replace: true });
     }
 
     if (mode === 'reset') {
-      const { error } = await supabase!.auth.resetPasswordForEmail(email);
+      const { error } = await supabase!.auth.resetPasswordForEmail(email, { redirectTo: getAuthRedirectUrl() });
       setMessage(error?.message ?? 'Correo de recuperación enviado.');
     }
   };

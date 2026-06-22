@@ -1,4 +1,4 @@
-import { CheckCircle, Clock, Coins, Medal, ScrollText, Target, Trophy } from 'lucide-react';
+import { Clock, Coins, Medal, ScrollText, Target, Trophy } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { KNOCKOUT_SCORE_RULES } from '../../domain/worldCupEngine';
 import { isSupabaseConfigured, supabase } from '../../lib/supabase';
@@ -10,11 +10,11 @@ type RulesRow = {
   updated_at: string | null;
 };
 
-type RulesAcknowledgementRow = {
-  rules_version: number;
-};
-
-const LOCAL_RULES_ACK_KEY = 'mundial-app-rules-ack-version';
+function formatRulePointsCopy(line: string): string {
+  return line
+    .replace(/(?<!\+)\b([0-9]+)\s+puntos?\b/g, (_match, points) => (points === '1' ? '+1 punto' : `+${points} puntos`))
+    .replace(/\bsumas\s+([0-9]+)\b/g, 'sumas +$1');
+}
 
 function renderRuleBody(body: string) {
   return body
@@ -24,7 +24,7 @@ function renderRuleBody(body: string) {
     .map((line, index) => (
       <div className="rule-line" key={`${line}-${index}`}>
         <span />
-        <p>{line}</p>
+        <p>{formatRulePointsCopy(line)}</p>
       </div>
     ));
 }
@@ -39,24 +39,18 @@ const knockoutRows = [
 
 export function RulesPage() {
   const [rules, setRules] = useState<RulesContent>(DEFAULT_RULES_CONTENT);
-  const [acceptedVersion, setAcceptedVersion] = useState(0);
-  const [userId, setUserId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(isSupabaseConfigured);
-  const [isSaving, setIsSaving] = useState(false);
-  const [message, setMessage] = useState('');
 
-  const hasAcceptedCurrentRules = acceptedVersion >= rules.version;
+  const getSection = (sectionId: string) =>
+    rules.sections.find((section) => section.id === sectionId) ?? DEFAULT_RULES_CONTENT.sections.find((section) => section.id === sectionId)!;
 
   useEffect(() => {
     let isMounted = true;
 
     async function loadRules() {
       setIsLoading(true);
-      setMessage('');
 
       let nextRules = DEFAULT_RULES_CONTENT;
-      let nextUserId: string | null = null;
-      let nextAcceptedVersion = 0;
 
       if (isSupabaseConfigured && supabase) {
         const { data: rulesRow } = await supabase.from('app_rules').select('version, sections, updated_at').eq('id', true).maybeSingle();
@@ -68,28 +62,10 @@ export function RulesPage() {
             updatedAt: row.updated_at,
           });
         }
-
-        const { data: userResult } = await supabase.auth.getUser();
-        nextUserId = userResult.user?.id ?? null;
-
-        if (nextUserId) {
-          const { data: ackRow } = await supabase
-            .from('rule_acknowledgements')
-            .select('rules_version')
-            .eq('user_id', nextUserId)
-            .maybeSingle();
-          nextAcceptedVersion = (ackRow as RulesAcknowledgementRow | null)?.rules_version ?? 0;
-        } else {
-          nextAcceptedVersion = Number(localStorage.getItem(LOCAL_RULES_ACK_KEY) ?? 0);
-        }
-      } else {
-        nextAcceptedVersion = Number(localStorage.getItem(LOCAL_RULES_ACK_KEY) ?? 0);
       }
 
       if (!isMounted) return;
       setRules(nextRules);
-      setUserId(nextUserId);
-      setAcceptedVersion(nextAcceptedVersion);
       setIsLoading(false);
     }
 
@@ -100,37 +76,6 @@ export function RulesPage() {
     };
   }, []);
 
-  const acceptRules = async () => {
-    if (hasAcceptedCurrentRules) return;
-
-    if (isSupabaseConfigured && supabase && userId) {
-      setIsSaving(true);
-      setMessage('');
-
-      const { error } = await supabase.from('rule_acknowledgements').upsert(
-        {
-          user_id: userId,
-          rules_version: rules.version,
-          accepted_at: new Date().toISOString(),
-        },
-        { onConflict: 'user_id' },
-      );
-
-      setIsSaving(false);
-
-      if (error) {
-        setMessage(`No pude guardar la lectura de reglas: ${error.message}`);
-        return;
-      }
-    } else {
-      localStorage.setItem(LOCAL_RULES_ACK_KEY, String(rules.version));
-    }
-
-    setAcceptedVersion(rules.version);
-    window.dispatchEvent(new Event('rules-acknowledged'));
-    setMessage('Reglas marcadas como leídas.');
-  };
-
   return (
     <section className="page">
       <div className="page-heading">
@@ -140,103 +85,117 @@ export function RulesPage() {
         </div>
       </div>
 
-      {message ? <p className="form-message">{message}</p> : null}
       {isLoading ? <p className="empty-state">Cargando reglas...</p> : null}
 
       <section className="rules-hero">
         <ScrollText size={30} />
         <div>
-          <h2>Antes de jugar, toca leerlas.</h2>
-          <p>Primero lo importante de un vistazo. Abajo tienes el detalle completo por si alguien quiere hilar fino.</p>
-        </div>
-        <span className={hasAcceptedCurrentRules ? 'rules-status rules-status--accepted' : 'rules-status'}>
-          {hasAcceptedCurrentRules ? 'Leídas' : 'Pendientes'}
-        </span>
-      </section>
-
-      <section className="rules-quick-grid" aria-label="Resumen rápido de reglas">
-        <article className="rules-summary-card rules-summary-card--primary">
-          <Target size={22} />
-          <span>Fase de grupos</span>
-          <strong>3 / 1 / 0</strong>
-          <p>3 exacto · 1 signo correcto · 0 fallo</p>
-        </article>
-        <article className="rules-summary-card">
-          <Clock size={22} />
-          <span>Límite</span>
-          <strong>Saque inicial</strong>
-          <p>Cuando empieza el partido, ya no se toca.</p>
-        </article>
-        <article className="rules-summary-card">
-          <Coins size={22} />
-          <span>Entrada</span>
-          <strong>5 €</strong>
-          <p>Por cabeza para entrar en la porra.</p>
-        </article>
-        <article className="rules-summary-card">
-          <Trophy size={22} />
-          <span>Premios</span>
-          <strong>60 / 25 / 15</strong>
-          <p>Primero, segundo y tercero.</p>
-        </article>
-      </section>
-
-      <section className="rules-scoreboard">
-        <div className="section-heading">
-          <h2>Eliminatorias en una mirada</h2>
-        </div>
-        <div className="rules-scoreboard__grid">
-          {knockoutRows.map((row) => (
-            <div className="rules-score-row" key={row.label}>
-              <strong>{row.label}</strong>
-              <span>
-                <b>{row.exact}</b> exacto
-              </span>
-              <span>
-                <b>{row.winner}</b> clasificado
-              </span>
-            </div>
-          ))}
+          <h2>Reglas de la porra</h2>
+          <p>Tres cosas: cómo se puntúa, cómo se juega y cómo se reparte el bote.</p>
         </div>
       </section>
 
-      <section className="rules-prize-strip" aria-label="Reparto de premios">
-        <div>
-          <Medal size={20} />
-          <strong>1º</strong>
-          <span>60%</span>
+      <section className="rules-topic">
+        <div className="rules-topic__heading">
+          <Target size={24} />
+          <h2>Puntuación</h2>
         </div>
-        <div>
-          <Medal size={20} />
-          <strong>2º</strong>
-          <span>25%</span>
-        </div>
-        <div>
-          <Medal size={20} />
-          <strong>3º</strong>
-          <span>15%</span>
-        </div>
-      </section>
 
-      <div className="rules-grid">
-        {rules.sections.map((section) => (
-          <article className="table-card rule-card" key={section.id}>
-            <h2>{section.title}</h2>
-            <div className="rule-card__body">{renderRuleBody(section.body)}</div>
+        <div className="rules-quick-grid" aria-label="Puntuación fase de grupos">
+          <article className="rules-summary-card rules-summary-card--primary">
+            <span>Marcador exacto</span>
+            <strong>+3 pts</strong>
+            <p>Clavas el resultado.</p>
           </article>
-        ))}
-      </div>
-
-      <section className="rules-acceptance">
-        <div>
-          <strong>{hasAcceptedCurrentRules ? 'Ya has marcado estas reglas como leídas.' : 'Marca que has leído las reglas para tenerlo claro.'}</strong>
-          <p>Si se editan más adelante, la app te volverá a pedir que confirmes la nueva versión.</p>
+          <article className="rules-summary-card">
+            <span>Signo correcto</span>
+            <strong>+1 pt</strong>
+            <p>Aciertas ganador o empate.</p>
+          </article>
+          <article className="rules-summary-card">
+            <span>Fallo</span>
+            <strong>+0 pts</strong>
+            <p>No aciertas lo que pasa.</p>
+          </article>
         </div>
-        <button className="primary-button" type="button" onClick={() => void acceptRules()} disabled={isSaving || hasAcceptedCurrentRules}>
-          <CheckCircle size={16} />
-          {isSaving ? 'Guardando...' : hasAcceptedCurrentRules ? 'Reglas leídas' : 'He leído las reglas'}
-        </button>
+
+        <section className="rules-scoreboard">
+          <h3>Eliminatorias</h3>
+          <div className="rules-scoreboard__grid">
+            {knockoutRows.map((row) => (
+              <div className="rules-score-row" key={row.label}>
+                <strong>{row.label}</strong>
+                <span>
+                  <b>+{row.exact}</b> exacto
+                </span>
+                <span>
+                  <b>+{row.winner}</b> clasificado
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <div className="rule-card__body rules-topic__notes">{renderRuleBody(getSection('puntuacion').body)}</div>
       </section>
+
+      <section className="rules-topic">
+        <div className="rules-topic__heading">
+          <Clock size={24} />
+          <h2>Cómo se juega</h2>
+        </div>
+
+        <div className="rules-quick-grid rules-quick-grid--play">
+          <article className="rules-summary-card">
+            <Coins size={22} />
+            <span>Entrada</span>
+            <strong>5 €</strong>
+            <p>Por cabeza.</p>
+          </article>
+          <article className="rules-summary-card rules-summary-card--primary">
+            <Clock size={22} />
+            <span>Límite</span>
+            <strong>Antes de empezar</strong>
+            <p>Después del saque inicial se bloquea.</p>
+          </article>
+          <article className="rules-summary-card">
+            <Trophy size={22} />
+            <span>Eliminatorias</span>
+            <strong>Elige quién pasa</strong>
+            <p>Obligatorio si pones empate.</p>
+          </article>
+        </div>
+
+        <div className="rule-card__body rules-topic__notes">{renderRuleBody(getSection('como-se-juega').body)}</div>
+      </section>
+
+      <section className="rules-topic">
+        <div className="rules-topic__heading">
+          <Medal size={24} />
+          <h2>Reparto de premios</h2>
+        </div>
+
+        <section className="rules-prize-strip" aria-label="Reparto de premios">
+          <div>
+            <Medal size={20} />
+            <strong>1º</strong>
+            <span>60%</span>
+          </div>
+          <div>
+            <Medal size={20} />
+            <strong>2º</strong>
+            <span>25%</span>
+          </div>
+          <div>
+            <Medal size={20} />
+            <strong>3º</strong>
+            <span>15%</span>
+          </div>
+        </section>
+
+        <div className="rule-card__body rules-topic__notes">{renderRuleBody(getSection('premios').body)}</div>
+      </section>
+
     </section>
   );
 }

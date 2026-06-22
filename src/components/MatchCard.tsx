@@ -8,6 +8,9 @@ type MatchCardProps = {
   match: Match;
   prediction?: { home: number; away: number; points: number };
   predictionStatus?: 'draft' | 'modified' | 'saved';
+  predictionResult?: 'correct' | 'miss';
+  glow?: 'locked' | 'missing' | 'modifiable' | 'saved' | 'available';
+  hideStatusPill?: boolean;
   onTeamClick?: (teamId: string) => void;
 };
 
@@ -27,10 +30,11 @@ function TeamLabel({
   );
 }
 
-export function MatchCard({ match, prediction, predictionStatus, onTeamClick }: MatchCardProps) {
+export function MatchCard({ match, prediction, predictionStatus, predictionResult, glow, hideStatusPill = false, onTeamClick }: MatchCardProps) {
   const isLocked = new Date(match.kickoffAt).getTime() <= Date.now();
   const tone = match.status === 'FINAL' ? 'good' : isLocked ? 'danger' : 'warn';
   const label = match.status === 'FINAL' ? 'Finalizado' : isLocked ? 'Bloqueada' : 'Disponible';
+  const glowLabel = glow === 'locked' ? 'En juego' : glow === 'missing' ? 'Disponible' : glow === 'modifiable' ? 'Modificable' : null;
   const predictionLabel =
     predictionStatus === 'saved'
       ? 'Apuesta guardada'
@@ -41,10 +45,19 @@ export function MatchCard({ match, prediction, predictionStatus, onTeamClick }: 
           : 'Tu predicción';
 
   return (
-    <article className="match-card">
+    <article className={`match-card${glow ? ` match-card--glow-${glow}` : ''}`}>
       <div className="match-card__meta">
         <span>M{match.fifaMatchNumber}</span>
-        <StatusPill tone={tone}>{label}</StatusPill>
+        {hideStatusPill ? (
+          glowLabel ? (
+            <span className={`match-card__state match-card__state--${glow}`}>
+              {glow === 'locked' ? <span className="match-card__state-dot" /> : null}
+              {glowLabel}
+            </span>
+          ) : null
+        ) : (
+          <StatusPill tone={tone}>{label}</StatusPill>
+        )}
       </div>
       <div className="match-card__teams">
         <TeamLabel teamId={match.homeTeamId} onTeamClick={onTeamClick} />
@@ -56,7 +69,11 @@ export function MatchCard({ match, prediction, predictionStatus, onTeamClick }: 
         <span>{formatMadridDateTime(match.kickoffAt)}</span>
       </div>
       {prediction ? (
-        <div className={`match-card__prediction${predictionStatus ? ` match-card__prediction--${predictionStatus}` : ''}`}>
+        <div
+          className={`match-card__prediction${predictionStatus ? ` match-card__prediction--${predictionStatus}` : ''}${
+            predictionResult ? ` match-card__prediction--${predictionResult}` : ''
+          }`}
+        >
           {predictionLabel}: {prediction.home}-{prediction.away}
           {match.status === 'FINAL' ? ` · ${prediction.points} pts` : ''}
         </div>

@@ -1,9 +1,8 @@
-import { ArrowDown, ArrowRight, ArrowUp, CalendarDays, Minus, Target } from 'lucide-react';
+import { ArrowDown, ArrowRight, ArrowUp, CalendarDays, Crown, Minus, Target } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { MatchCard } from '../../components/MatchCard';
 import { demoMatches, demoRanking, teamName } from '../../data/demoTournament';
-import { withFlag } from '../../data/teamFlags';
 import {
   compareOutcome,
   type DecidedBy,
@@ -14,6 +13,9 @@ import {
 } from '../../domain/worldCupEngine';
 import { formatMadridDateTime, formatScore } from '../../lib/format';
 import { isSupabaseConfigured, supabase } from '../../lib/supabase';
+
+const MADRID_TIME_ZONE = 'Europe/Madrid';
+const PREDICTION_DAY_START_HOUR = 7;
 
 type MatchRow = {
   id: string;
@@ -132,6 +134,13 @@ function predictionStateCopy(state: PredictionState): { label: string; tone: str
   return { label: 'Sin predicción', tone: 'neutral' };
 }
 
+function resultCardClassName(state: PredictionState): string {
+  if (state === 'exact') return 'table-card result-card result-card--exact';
+  if (state === 'outcome') return 'table-card result-card result-card--outcome';
+  if (state === 'miss') return 'table-card result-card result-card--miss';
+  return 'table-card result-card';
+}
+
 function toCardPrediction(prediction: PredictionRow | undefined): { home: number; away: number; points: number } | undefined {
   if (!prediction) return undefined;
   return {
@@ -141,21 +150,41 @@ function toCardPrediction(prediction: PredictionRow | undefined): { home: number
   };
 }
 
-function getMadridDayKey(value: string | Date): string {
+function getDashboardPredictionGlow(match: Match, prediction: PredictionRow | undefined): 'locked' | 'missing' | 'modifiable' {
+  const isLocked = new Date(match.kickoffAt).getTime() <= Date.now();
+  if (isLocked) return 'locked';
+  return prediction ? 'modifiable' : 'missing';
+}
+
+function getMadridDateParts(value: string | Date): { year: number; month: number; day: number; hour: number } {
   const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Europe/Madrid',
+    timeZone: MADRID_TIME_ZONE,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
+    hour: '2-digit',
+    hourCycle: 'h23',
   }).formatToParts(new Date(value));
+
   const byType = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return `${byType.year}-${byType.month}-${byType.day}`;
+  return {
+    year: Number(byType.year),
+    month: Number(byType.month),
+    day: Number(byType.day),
+    hour: Number(byType.hour),
+  };
 }
 
 function addDaysToDayKey(dayKey: string, days: number): string {
   const [year, month, day] = dayKey.split('-').map(Number);
   const date = new Date(Date.UTC(year, month - 1, day + days));
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
+}
+
+function getPredictionDayKey(value: string | Date): string {
+  const parts = getMadridDateParts(value);
+  const calendarDayKey = `${parts.year}-${String(parts.month).padStart(2, '0')}-${String(parts.day).padStart(2, '0')}`;
+  return parts.hour < PREDICTION_DAY_START_HOUR ? addDaysToDayKey(calendarDayKey, -1) : calendarDayKey;
 }
 
 export function DashboardPage() {
@@ -190,7 +219,7 @@ export function DashboardPage() {
 
       const currentUserId = userResult.user?.id ?? null;
       setUserId(currentUserId);
-      const yesterdayKey = addDaysToDayKey(getMadridDayKey(new Date()), -1);
+      const yesterdayKey = addDaysToDayKey(getPredictionDayKey(new Date()), -1);
 
       const [matchResult, rankingResult, predictionResult, deltaResult, visiblePredictionResult] = await Promise.all([
         supabase!
@@ -257,14 +286,22 @@ export function DashboardPage() {
     };
   }, []);
 
-  const now = Date.now();
-  const nextMatches = useMemo(
+  const currentPredictionDayKey = useMemo(() => getPredictionDayKey(new Date()), []);
+  const todayPredictionMatches = useMemo(
     () =>
       matches
-        .filter((match) => match.homeTeamId && match.awayTeamId && match.status !== 'FINAL' && new Date(match.kickoffAt).getTime() > now)
-        .sort((a, b) => new Date(a.kickoffAt).getTime() - new Date(b.kickoffAt).getTime())
-        .slice(0, 5),
-    [matches, now],
+        .filter((match) => match.homeTeamId && match.awayTeamId && match.status !== 'FINAL')
+        .filter((match) => getPredictionDayKey(match.kickoffAt) === currentPredictionDayKey)
+        .sort((a, b) => new Date(a.kickoffAt).getTime() - new Date(b.kickoffAt).getTime()),
+    [currentPredictionDayKey, matches],
+  );
+  const predictedTodayMatches = useMemo(
+    () => todayPredictionMatches.filter((match) => Boolean(predictions[match.id])),
+    [predictions, todayPredictionMatches],
+  );
+  const missingTodayMatches = useMemo(
+    () => todayPredictionMatches.filter((match) => !predictions[match.id]),
+    [predictions, todayPredictionMatches],
   );
   const recentMatches = useMemo(
     () =>
@@ -277,14 +314,11 @@ export function DashboardPage() {
   const rankedRows = useMemo(() => rankRows(rankingRows), [rankingRows]);
   const currentUserRank = rankedRows.find((row) => row.user_id === userId) ?? null;
   const currentUserDelta = dailyDeltas.find((row) => row.user_id === userId) ?? null;
-  const yesterdayKey = useMemo(() => addDaysToDayKey(getMadridDayKey(new Date()), -1), []);
-  const yesterdayPoints =
-    currentUserDelta?.points_on_day ??
-    Object.values(predictions).reduce((total, prediction) => {
-      const match = matches.find((item) => item.id === prediction.match_id);
-      if (!match || match.status !== 'FINAL' || getMadridDayKey(match.kickoffAt) !== yesterdayKey) return total;
-      return total + prediction.points_awarded;
-    }, 0);
+  const todayPoints = Object.values(predictions).reduce((total, prediction) => {
+    const match = matches.find((item) => item.id === prediction.match_id);
+    if (!match || match.status !== 'FINAL' || getPredictionDayKey(match.kickoffAt) !== currentPredictionDayKey) return total;
+    return total + prediction.points_awarded;
+  }, 0);
   const rankDelta = currentUserDelta?.position_delta ?? 0;
   const rankDeltaCopy = !currentUserRank
     ? { label: '-', tone: 'neutral', Icon: Minus }
@@ -331,65 +365,95 @@ export function DashboardPage() {
 
       <div className="metric-grid">
         <article className="metric">
+          <Target size={22} />
+          <span>Posición ranking</span>
+          <strong>{currentUserRank ? `#${currentUserRank.position}` : '-'}</strong>
+        </article>
+        <article className="metric">
           <CalendarDays size={22} />
-          <span>Puntos ayer</span>
-          <strong>+{yesterdayPoints}</strong>
+          <span>Puntos hoy</span>
+          <strong>+{todayPoints}</strong>
         </article>
         <article className={`metric metric--${rankDeltaCopy.tone}`}>
           <rankDeltaCopy.Icon size={22} />
-          <span>Cambio ranking</span>
+          <span>Cambio hoy</span>
           <strong>{rankDeltaCopy.label}</strong>
         </article>
       </div>
 
       <div className="split-section dashboard-main">
-        <section className="prediction-section">
+        <section className="prediction-section dashboard-predictions-section">
           <div className="section-heading">
-            <h2>Próximos partidos</h2>
-            <span>{nextMatches.length}</span>
+            <h2>Predicciones de hoy</h2>
+            <span>{todayPredictionMatches.length}</span>
           </div>
-          <div className="match-list">
-            {nextMatches.length > 0 ? (
-              nextMatches.map((match) => <MatchCard key={match.id} match={match} prediction={toCardPrediction(predictions[match.id])} />)
-            ) : (
-              <section className="table-card">
-                <p className="empty-state">No hay próximos partidos disponibles ahora mismo.</p>
-              </section>
-            )}
+          <div className="prediction-buckets">
+            <section className="prediction-day">
+              <div className="section-heading section-heading--compact">
+                <h3>Ya hechas</h3>
+                <span>{predictedTodayMatches.length}</span>
+              </div>
+              <div className="match-list">
+                {predictedTodayMatches.length > 0 ? (
+                  predictedTodayMatches.map((match) => (
+                    <MatchCard
+                      key={match.id}
+                      match={match}
+                      prediction={toCardPrediction(predictions[match.id])}
+                      glow={getDashboardPredictionGlow(match, predictions[match.id])}
+                      hideStatusPill
+                    />
+                  ))
+                ) : (
+                  <section className="table-card">
+                    <p className="empty-state">Todavía no has guardado predicciones para los partidos de este día.</p>
+                  </section>
+                )}
+              </div>
+            </section>
+
+            <section className="prediction-day">
+              <div className="section-heading section-heading--compact">
+                <h3>Por predecir</h3>
+                <span>{missingTodayMatches.length}</span>
+              </div>
+              <div className="match-list">
+                {missingTodayMatches.length > 0 ? (
+                  missingTodayMatches.map((match) => (
+                    <MatchCard
+                      key={match.id}
+                      match={match}
+                      prediction={toCardPrediction(predictions[match.id])}
+                      glow={getDashboardPredictionGlow(match, predictions[match.id])}
+                      hideStatusPill
+                    />
+                  ))
+                ) : todayPredictionMatches.length > 0 ? (
+                  <section className="table-card">
+                    <p className="empty-state">Vas al día: no te falta ninguna predicción para hoy.</p>
+                  </section>
+                ) : (
+                  <section className="table-card">
+                    <p className="empty-state">No hay partidos pendientes en el día operativo actual.</p>
+                  </section>
+                )}
+              </div>
+            </section>
           </div>
         </section>
 
-        <section className="prediction-section">
+        <section className="prediction-section dashboard-public-section">
           <div className="section-heading">
-            <h2>Mi ranking</h2>
-            <Target size={18} />
-          </div>
-          <div className="table-card rank-summary">
-            {currentUserRank ? (
-              <>
-                <span>Posición actual</span>
-                <strong>#{currentUserRank.position}</strong>
-                <p>
-                  {currentUserRank.total_points} pts · {currentUserRank.match_points} en partidos · {currentUserRank.special_points} especiales
-                </p>
-              </>
-            ) : (
-              <>
-                <span>Sin posición todavía</span>
-                <strong>-</strong>
-                <p>Inicia sesión y guarda predicciones para aparecer en el ranking.</p>
-              </>
-            )}
+            <h2>Porras visibles</h2>
+            <span>{visiblePredictionGroups.length}</span>
           </div>
           <div className="table-card rank-predictions">
-            <h3>Porras visibles</h3>
             {visiblePredictionGroups.length > 0 ? (
               <div className="public-predictions">
                 {visiblePredictionGroups.map((group) => (
                   <article className="public-prediction-match" key={group.match.id}>
                     <h4>
-                      M{group.match.fifaMatchNumber} · {withFlag(group.match.homeTeamId, teamName(group.match.homeTeamId))} vs{' '}
-                      {withFlag(group.match.awayTeamId, teamName(group.match.awayTeamId))}
+                      M{group.match.fifaMatchNumber} · {teamName(group.match.homeTeamId)} vs {teamName(group.match.awayTeamId)}
                     </h4>
                     <div className="public-prediction-match__rows">
                       {group.predictions.map((prediction) => (
@@ -424,12 +488,16 @@ export function DashboardPage() {
               const copy = predictionStateCopy(state);
 
               return (
-                <article className="table-card result-card" key={match.id}>
+                <article className={resultCardClassName(state)} key={match.id}>
+                  {state === 'exact' ? (
+                    <div className="result-card__crown" aria-label="Marcador exacto">
+                      <Crown size={24} />
+                    </div>
+                  ) : null}
                   <div>
                     <p className="eyebrow">M{match.fifaMatchNumber} · {formatMadridDateTime(match.kickoffAt)}</p>
                     <h3>
-                      {withFlag(match.homeTeamId, teamName(match.homeTeamId))} {formatScore(match.homeScore, match.awayScore)}{' '}
-                      {withFlag(match.awayTeamId, teamName(match.awayTeamId))}
+                      {teamName(match.homeTeamId)} {formatScore(match.homeScore, match.awayScore)} {teamName(match.awayTeamId)}
                     </h3>
                   </div>
                   <div className={`prediction-badge prediction-badge--${copy.tone}`}>
