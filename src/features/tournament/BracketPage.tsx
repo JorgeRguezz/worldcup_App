@@ -28,7 +28,6 @@ export function BracketPage() {
               .filter((match) => match.stage === stage.id)
               .map((match) => (
                 <article className="bracket-match" key={match.id}>
-                  <span>M{match.fifaMatchNumber}</span>
                   <strong>{teamName(match.homeTeamId)}</strong>
                   <strong>{teamName(match.awayTeamId)}</strong>
                   <small>{formatMadridDateTime(match.kickoffAt)}</small>

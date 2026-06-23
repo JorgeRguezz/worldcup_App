@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { isDisplayNameTakenError, normalizeDisplayName, validateDisplayName } from '../../lib/profile';
 import { isSupabaseConfigured, supabase } from '../../lib/supabase';
 
 function getAuthRedirectUrl(): string {
@@ -36,15 +37,28 @@ export function AuthPage() {
     }
 
     if (mode === 'signup') {
+      const normalizedDisplayName = normalizeDisplayName(displayName || email.split('@')[0]);
+      const validationMessage = validateDisplayName(normalizedDisplayName);
+      if (validationMessage) {
+        setMessage(validationMessage);
+        return;
+      }
+
       const { data, error } = await supabase!.auth.signUp({
         email,
         password,
         options: {
-          data: { display_name: displayName || email.split('@')[0] },
+          data: { display_name: normalizedDisplayName },
           emailRedirectTo: getAuthRedirectUrl(),
         },
       });
-      setMessage(error?.message ?? 'Cuenta creada. Revisa el correo si tu proyecto exige confirmación.');
+      setMessage(
+        error
+          ? isDisplayNameTakenError(error)
+            ? 'Ese nombre ya lo está usando otra persona.'
+            : error.message
+          : 'Cuenta creada. Revisa el correo si tu proyecto exige confirmación.',
+      );
       if (!error && data.session) navigate('/reglas', { replace: true });
     }
 

@@ -2,6 +2,7 @@ import { PencilLine, Save } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { MatchCard } from '../../components/MatchCard';
+import { RecentPredictionResults } from '../../components/RecentPredictionResults';
 import { TeamProfile } from '../../components/TeamProfile';
 import { demoMatches, teamName } from '../../data/demoTournament';
 import type { DecidedBy, GroupLetter, Match, MatchStatus, Stage } from '../../domain/worldCupEngine';
@@ -277,9 +278,9 @@ export function PredictionsPage() {
   });
 
   const buildPredictionRow = (match: Match, draft: DraftPrediction | undefined, currentUserId: string): PredictionUpsertRow | string => {
-    if (isLocked(match)) return `El partido M${match.fifaMatchNumber} ya empezó y no se puede guardar.`;
-    if (!match.homeTeamId || !match.awayTeamId) return `El partido M${match.fifaMatchNumber} todavía no tiene equipos definidos.`;
-    if (!isCompleteDraft(draft)) return `Completa el marcador del partido M${match.fifaMatchNumber} antes de guardar.`;
+    if (isLocked(match)) return 'Este partido ya empezó y no se puede guardar.';
+    if (!match.homeTeamId || !match.awayTeamId) return 'Este partido todavía no tiene equipos definidos.';
+    if (!isCompleteDraft(draft)) return 'Completa el marcador del partido antes de guardar.';
 
     const home = Number(draft.home);
     const away = Number(draft.away);
@@ -289,7 +290,7 @@ export function PredictionsPage() {
 
     const isKnockoutDraw = match.stage !== 'GROUP' && home === away;
     if (isKnockoutDraw && !draft.advancingTeamId) {
-      return `El partido M${match.fifaMatchNumber} necesita elegir qué equipo avanza.`;
+      return 'Este partido necesita elegir qué equipo avanza.';
     }
 
     return {
@@ -336,7 +337,7 @@ export function PredictionsPage() {
       ...current,
       [match.id]: toSavedDraft(row, drafts[match.id]?.points ?? 0),
     }));
-    setMessage(wasSaved ? `Apuesta M${match.fifaMatchNumber} modificada.` : `Apuesta M${match.fifaMatchNumber} guardada.`);
+    setMessage(wasSaved ? 'Apuesta modificada.' : 'Apuesta guardada.');
   };
 
   if (isSupabaseConfigured && !isLoading && !userId) {
@@ -394,7 +395,7 @@ export function PredictionsPage() {
         />
         {readOnly ? null : (
           <>
-            <div className="score-inputs" aria-label={`Predicción M${match.fifaMatchNumber}`}>
+            <div className="score-inputs" aria-label="Predicción del partido">
               <input
                 type="number"
                 min={0}
@@ -458,6 +459,20 @@ export function PredictionsPage() {
           <TeamProfile teamId={selectedTeamId} matches={matches} onClose={() => setSelectedTeamId(null)} />
         </div>
       ) : null}
+
+      <RecentPredictionResults
+        matches={matches}
+        predictions={Object.fromEntries(
+          Object.entries(savedPredictions).map(([matchId, prediction]) => [
+            matchId,
+            {
+              home: Number(prediction.home),
+              away: Number(prediction.away),
+              points: prediction.points,
+            },
+          ]),
+        )}
+      />
 
       <section className="prediction-section">
         <div className="section-heading">

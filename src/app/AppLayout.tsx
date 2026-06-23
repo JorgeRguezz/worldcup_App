@@ -1,6 +1,7 @@
-import { ChevronDown, LogOut, Menu, Shield, Trophy } from 'lucide-react';
+import { ChevronDown, LogOut, Menu, Shield } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Navigate, NavLink, Outlet, useLocation } from 'react-router-dom';
+import worldCupLogoUrl from '../../assets/images/fifa-world-cup-2026-3.svg';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 
 const navItems = [
@@ -10,6 +11,7 @@ const navItems = [
   { to: '/cuadro', label: 'Cuadro' },
   { to: '/ranking', label: 'Ranking' },
   { to: '/reglas', label: 'Reglas' },
+  { to: '/perfil', label: 'Perfil' },
 ];
 
 type ProfileRow = {
@@ -97,7 +99,7 @@ export function AppLayout() {
     <div className="app-shell">
       <aside className={`sidebar ${canSeeAdmin ? 'sidebar--admin' : 'sidebar--user'}`}>
         <NavLink to="/" className="brand">
-          <Trophy size={28} />
+          <img className="brand__logo" src={worldCupLogoUrl} alt="" aria-hidden="true" />
           <span>Porra Mundial 2026</span>
         </NavLink>
         <details ref={mobileNavMenuRef} className="mobile-nav-menu">

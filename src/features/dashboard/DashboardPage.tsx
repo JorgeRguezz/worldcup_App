@@ -1,7 +1,8 @@
-import { ArrowDown, ArrowRight, ArrowUp, CalendarDays, Crown, Minus, Target } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { ArrowDown, ArrowRight, ArrowUp, CalendarDays, ChevronLeft, ChevronRight, Crown, Minus, Target } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { MatchCard } from '../../components/MatchCard';
+import { RecentPredictionResults } from '../../components/RecentPredictionResults';
 import { demoMatches, demoRanking, teamName } from '../../data/demoTournament';
 import {
   compareOutcome,
@@ -12,6 +13,7 @@ import {
   type Stage,
 } from '../../domain/worldCupEngine';
 import { formatMadridDateTime, formatScore } from '../../lib/format';
+import { formatRankingPosition } from '../../lib/ranking';
 import { isSupabaseConfigured, supabase } from '../../lib/supabase';
 
 const MADRID_TIME_ZONE = 'Europe/Madrid';
@@ -204,6 +206,8 @@ export function DashboardPage() {
   );
   const [isLoading, setIsLoading] = useState(isSupabaseConfigured);
   const [message, setMessage] = useState('');
+  const publicPredictionsRef = useRef<HTMLDivElement | null>(null);
+  const [publicSliderState, setPublicSliderState] = useState({ canGoLeft: false, canGoRight: false });
 
   useEffect(() => {
     if (!isSupabaseConfigured || !supabase) return;
@@ -325,17 +329,18 @@ export function DashboardPage() {
     : !isDailyDeltaReady
       ? { label: 'Pendiente', tone: 'neutral', Icon: Minus }
       : rankDelta > 0
-      ? { label: `Subes ${rankDelta}`, tone: 'good', Icon: ArrowUp }
+      ? { label: `+${rankDelta}`, tone: 'good', Icon: ArrowUp }
       : rankDelta < 0
-        ? { label: `Bajas ${Math.abs(rankDelta)}`, tone: 'danger', Icon: ArrowDown }
-        : { label: 'Sin cambios', tone: 'neutral', Icon: Minus };
+        ? { label: String(rankDelta), tone: 'danger', Icon: ArrowDown }
+        : { label: '0', tone: 'neutral', Icon: Minus };
   const visiblePredictionGroups = useMemo<VisiblePredictionMatchGroup[]>(
     () =>
       matches
         .filter((match) => match.status !== 'FINAL')
         .sort((a, b) => {
-          if (a.fifaMatchNumber !== b.fifaMatchNumber) return a.fifaMatchNumber - b.fifaMatchNumber;
-          return new Date(a.kickoffAt).getTime() - new Date(b.kickoffAt).getTime();
+          const kickoffDiff = new Date(a.kickoffAt).getTime() - new Date(b.kickoffAt).getTime();
+          if (kickoffDiff !== 0) return kickoffDiff;
+          return a.fifaMatchNumber - b.fifaMatchNumber;
         })
         .map((match) => ({
           match,
@@ -347,6 +352,48 @@ export function DashboardPage() {
         .slice(0, 6),
     [matches, userId, visiblePredictions],
   );
+  const updatePublicSliderState = useCallback(() => {
+    const slider = publicPredictionsRef.current;
+    if (!slider) {
+      setPublicSliderState({ canGoLeft: false, canGoRight: false });
+      return;
+    }
+
+    const maxScrollLeft = slider.scrollWidth - slider.clientWidth;
+    const nextState = {
+      canGoLeft: slider.scrollLeft > 4,
+      canGoRight: maxScrollLeft - slider.scrollLeft > 4,
+    };
+
+    setPublicSliderState((current) =>
+      current.canGoLeft === nextState.canGoLeft && current.canGoRight === nextState.canGoRight ? current : nextState,
+    );
+  }, []);
+
+  useEffect(() => {
+    updatePublicSliderState();
+    const slider = publicPredictionsRef.current;
+    if (!slider) return;
+
+    slider.addEventListener('scroll', updatePublicSliderState, { passive: true });
+    window.addEventListener('resize', updatePublicSliderState);
+
+    return () => {
+      slider.removeEventListener('scroll', updatePublicSliderState);
+      window.removeEventListener('resize', updatePublicSliderState);
+    };
+  }, [updatePublicSliderState, visiblePredictionGroups.length]);
+
+  const scrollPublicPredictions = (direction: 'left' | 'right') => {
+    const slider = publicPredictionsRef.current;
+    if (!slider) return;
+
+    slider.scrollBy({
+      left: direction === 'left' ? -slider.clientWidth : slider.clientWidth,
+      behavior: 'smooth',
+    });
+    window.setTimeout(updatePublicSliderState, 260);
+  };
 
   return (
     <section className="page">
@@ -367,7 +414,7 @@ export function DashboardPage() {
         <article className="metric">
           <Target size={22} />
           <span>Posición ranking</span>
-          <strong>{currentUserRank ? `#${currentUserRank.position}` : '-'}</strong>
+          <strong>{formatRankingPosition(currentUserRank?.position)}</strong>
         </article>
         <article className="metric">
           <CalendarDays size={22} />
@@ -376,10 +423,16 @@ export function DashboardPage() {
         </article>
         <article className={`metric metric--${rankDeltaCopy.tone}`}>
           <rankDeltaCopy.Icon size={22} />
-          <span>Cambio hoy</span>
+          <span>Cambio ranking</span>
           <strong>{rankDeltaCopy.label}</strong>
         </article>
       </div>
+
+      <RecentPredictionResults matches={matches} predictions={Object.fromEntries(Object.entries(predictions).map(([matchId, prediction]) => [matchId, {
+        home: prediction.predicted_home_score,
+        away: prediction.predicted_away_score,
+        points: prediction.points_awarded,
+      }]))} />
 
       <div className="split-section dashboard-main">
         <section className="prediction-section dashboard-predictions-section">
@@ -444,16 +497,17 @@ export function DashboardPage() {
 
         <section className="prediction-section dashboard-public-section">
           <div className="section-heading">
-            <h2>Porras visibles</h2>
+            <h2>Qué han apostado</h2>
             <span>{visiblePredictionGroups.length}</span>
           </div>
           <div className="table-card rank-predictions">
             {visiblePredictionGroups.length > 0 ? (
-              <div className="public-predictions">
+              <>
+                <div className="public-predictions" ref={publicPredictionsRef}>
                 {visiblePredictionGroups.map((group) => (
                   <article className="public-prediction-match" key={group.match.id}>
                     <h4>
-                      M{group.match.fifaMatchNumber} · {teamName(group.match.homeTeamId)} vs {teamName(group.match.awayTeamId)}
+                      {teamName(group.match.homeTeamId)} vs {teamName(group.match.awayTeamId)}
                     </h4>
                     <div className="public-prediction-match__rows">
                       {group.predictions.map((prediction) => (
@@ -467,7 +521,26 @@ export function DashboardPage() {
                     </div>
                   </article>
                 ))}
-              </div>
+                </div>
+                <button
+                  className="public-predictions__control public-predictions__control--left"
+                  type="button"
+                  aria-label="Ver partido anterior"
+                  disabled={!publicSliderState.canGoLeft}
+                  onClick={() => scrollPublicPredictions('left')}
+                >
+                  <ChevronLeft size={19} />
+                </button>
+                <button
+                  className="public-predictions__control public-predictions__control--right"
+                  type="button"
+                  aria-label="Ver siguiente partido"
+                  disabled={!publicSliderState.canGoRight}
+                  onClick={() => scrollPublicPredictions('right')}
+                >
+                  <ChevronRight size={19} />
+                </button>
+              </>
             ) : (
               <p className="empty-state">Cuando haya partidos no finalizados con porras visibles de otros usuarios, aparecerán aquí.</p>
             )}
@@ -495,7 +568,7 @@ export function DashboardPage() {
                     </div>
                   ) : null}
                   <div>
-                    <p className="eyebrow">M{match.fifaMatchNumber} · {formatMadridDateTime(match.kickoffAt)}</p>
+                    <p className="eyebrow">{formatMadridDateTime(match.kickoffAt)}</p>
                     <h3>
                       {teamName(match.homeTeamId)} {formatScore(match.homeScore, match.awayScore)} {teamName(match.awayTeamId)}
                     </h3>

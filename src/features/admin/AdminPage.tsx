@@ -348,8 +348,7 @@ export function AdminPage() {
                   <optgroup label="Pasados sin resultado">
                     {pastPendingMatches.map((match) => (
                       <option key={match.id} value={match.id}>
-                        {formatMadridDateTime(match.kickoffAt)} · M{match.fifaMatchNumber} · {teamLabel(match.homeTeamId)} vs{' '}
-                        {teamLabel(match.awayTeamId)}
+                        {formatMadridDateTime(match.kickoffAt)} · {teamLabel(match.homeTeamId)} vs {teamLabel(match.awayTeamId)}
                       </option>
                     ))}
                   </optgroup>
@@ -357,7 +356,7 @@ export function AdminPage() {
                 <optgroup label="Todos los partidos / correcciones">
                   {otherMatches.map((match) => (
                     <option key={match.id} value={match.id}>
-                      M{match.fifaMatchNumber} · {teamLabel(match.homeTeamId)} vs {teamLabel(match.awayTeamId)} · {match.status}
+                      {teamLabel(match.homeTeamId)} vs {teamLabel(match.awayTeamId)} · {match.status}
                     </option>
                   ))}
                 </optgroup>
@@ -401,7 +400,6 @@ export function AdminPage() {
             <h2>Partidos pasados sin resultado</h2>
             {pastPendingMatches.map((match) => (
               <div className="admin-match-row" key={match.id}>
-                <span>M{match.fifaMatchNumber}</span>
                 <strong>
                   {teamLabel(match.homeTeamId)} vs {teamLabel(match.awayTeamId)}
                 </strong>
@@ -419,7 +417,6 @@ export function AdminPage() {
               .slice(0, 8)
               .map((match) => (
                 <div className="admin-match-row" key={match.id}>
-                  <span>M{match.fifaMatchNumber}</span>
                   <strong>
                     {teamLabel(match.homeTeamId)} vs {teamLabel(match.awayTeamId)}
                   </strong>

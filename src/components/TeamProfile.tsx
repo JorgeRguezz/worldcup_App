@@ -39,7 +39,6 @@ export function TeamProfile({ teamId, matches, onClose }: TeamProfileProps) {
             <div className="team-match-list">
               {pastMatches.map((match) => (
                 <article className="team-match-row" key={match.id}>
-                  <span>M{match.fifaMatchNumber}</span>
                   <strong>
                     {teamName(match.homeTeamId)} vs {teamName(match.awayTeamId)}
                   </strong>
@@ -58,7 +57,6 @@ export function TeamProfile({ teamId, matches, onClose }: TeamProfileProps) {
             <div className="team-match-list">
               {futureMatches.map((match) => (
                 <article className="team-match-row" key={match.id}>
-                  <span>M{match.fifaMatchNumber}</span>
                   <strong>
                     {teamName(match.homeTeamId)} vs {teamName(match.awayTeamId)}
                   </strong>

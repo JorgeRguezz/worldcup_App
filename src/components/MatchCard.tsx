@@ -45,6 +45,7 @@ export function MatchCard({
   const tone = statusTone ?? (match.status === 'FINAL' ? 'good' : isLocked ? 'danger' : 'warn');
   const label = match.status === 'FINAL' ? 'Finalizado' : isLocked ? 'Bloqueada' : 'Disponible';
   const glowLabel = glow === 'locked' ? 'En juego' : glow === 'missing' ? 'Disponible' : glow === 'modifiable' ? 'Modificable' : null;
+  const shouldShowMeta = !hideStatusPill || Boolean(glowLabel);
   const predictionLabel =
     predictionStatus === 'saved'
       ? 'Apuesta guardada'
@@ -56,8 +57,8 @@ export function MatchCard({
 
   return (
     <article className={`match-card${glow ? ` match-card--glow-${glow}` : ''}`}>
-      <div className="match-card__meta">
-        <span>M{match.fifaMatchNumber}</span>
+      {shouldShowMeta ? (
+        <div className="match-card__meta">
         {hideStatusPill ? (
           glowLabel ? (
             <span className={`match-card__state match-card__state--${glow}`}>
@@ -68,7 +69,8 @@ export function MatchCard({
         ) : (
           <StatusPill tone={tone}>{label}</StatusPill>
         )}
-      </div>
+        </div>
+      ) : null}
       <div className="match-card__teams">
         <TeamLabel teamId={match.homeTeamId} onTeamClick={onTeamClick} />
         <span>{formatScore(match.homeScore, match.awayScore)}</span>
