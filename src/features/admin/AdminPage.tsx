@@ -43,6 +43,19 @@ type AppRulesRow = {
 
 type AdminAccessStatus = 'checking' | 'allowed' | 'denied';
 
+type LoadAdminOptions = {
+  preserveMessage?: boolean;
+};
+
+function isMissingAppRulesError(error: { code?: string; message?: string } | null): boolean {
+  return Boolean(
+    error &&
+      (error.code === 'PGRST205' ||
+        (error.message?.includes('app_rules') && error.message.includes('schema cache')) ||
+        error.message?.includes("Could not find the table 'public.app_rules'")),
+  );
+}
+
 function toMatch(row: MatchRow): Match {
   return {
     id: row.id,
@@ -117,7 +130,7 @@ export function AdminPage() {
     return team ? withFlag(teamId, `${team.short_name} · ${team.name}`) : withFlag(teamId, teamId);
   };
 
-  const loadAdminData = async () => {
+  const loadAdminData = async (options: LoadAdminOptions = {}) => {
     if (!isSupabaseConfigured || !supabase) {
       setAccessStatus('denied');
       setIsAdmin(false);
@@ -125,7 +138,9 @@ export function AdminPage() {
     }
 
     setIsLoading(true);
-    setMessage('');
+    if (!options.preserveMessage) {
+      setMessage('');
+    }
 
     const { data: userResult, error: userError } = await supabase.auth.getUser();
     if (userError || !userResult.user) {
@@ -181,7 +196,7 @@ export function AdminPage() {
       setTeams(Object.fromEntries(((teamRows ?? []) as TeamRow[]).map((team) => [team.id, team])));
     }
 
-    if (rulesError) setMessage(`No pude cargar reglas editables: ${rulesError.message}`);
+    if (rulesError && !isMissingAppRulesError(rulesError)) setMessage(`No pude cargar reglas editables: ${rulesError.message}`);
     else {
       const normalizedRules = normalizeRulesContent(
         rulesRow
@@ -249,7 +264,7 @@ export function AdminPage() {
     }
 
     setMessage('Resultado guardado y puntos recalculados.');
-    await loadAdminData();
+    await loadAdminData({ preserveMessage: true });
   };
 
   const updateRuleSection = (sectionId: string, patch: Partial<RuleSection>) => {

@@ -10,6 +10,7 @@ type MatchCardProps = {
   predictionStatus?: 'draft' | 'modified' | 'saved';
   predictionResult?: 'correct' | 'miss';
   glow?: 'locked' | 'missing' | 'modifiable' | 'saved' | 'available';
+  statusTone?: 'neutral' | 'good' | 'warn' | 'danger';
   hideStatusPill?: boolean;
   onTeamClick?: (teamId: string) => void;
 };
@@ -30,9 +31,18 @@ function TeamLabel({
   );
 }
 
-export function MatchCard({ match, prediction, predictionStatus, predictionResult, glow, hideStatusPill = false, onTeamClick }: MatchCardProps) {
+export function MatchCard({
+  match,
+  prediction,
+  predictionStatus,
+  predictionResult,
+  glow,
+  statusTone,
+  hideStatusPill = false,
+  onTeamClick,
+}: MatchCardProps) {
   const isLocked = new Date(match.kickoffAt).getTime() <= Date.now();
-  const tone = match.status === 'FINAL' ? 'good' : isLocked ? 'danger' : 'warn';
+  const tone = statusTone ?? (match.status === 'FINAL' ? 'good' : isLocked ? 'danger' : 'warn');
   const label = match.status === 'FINAL' ? 'Finalizado' : isLocked ? 'Bloqueada' : 'Disponible';
   const glowLabel = glow === 'locked' ? 'En juego' : glow === 'missing' ? 'Disponible' : glow === 'modifiable' ? 'Modificable' : null;
   const predictionLabel =

@@ -389,6 +389,7 @@ export function PredictionsPage() {
           prediction={predictionForCard}
           predictionStatus={predictionStatus}
           predictionResult={predictionResult}
+          statusTone={readOnly ? 'danger' : undefined}
           onTeamClick={showTeamProfile}
         />
         {readOnly ? null : (
