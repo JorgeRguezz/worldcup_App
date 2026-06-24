@@ -8,8 +8,8 @@ type MatchCardProps = {
   match: Match;
   prediction?: { home: number; away: number; points: number };
   predictionStatus?: 'draft' | 'modified' | 'saved';
-  predictionResult?: 'correct' | 'miss';
-  glow?: 'locked' | 'missing' | 'modifiable' | 'saved' | 'available';
+  predictionResult?: 'exact' | 'correct' | 'miss';
+  glow?: 'locked' | 'missing' | 'modifiable' | 'saved' | 'available' | 'exact' | 'correct' | 'miss';
   statusTone?: 'neutral' | 'good' | 'warn' | 'danger';
   hideStatusPill?: boolean;
   onTeamClick?: (teamId: string) => void;
@@ -86,6 +86,11 @@ export function MatchCard({
             predictionResult ? ` match-card__prediction--${predictionResult}` : ''
           }`}
         >
+          {predictionResult ? (
+            <span className="prediction-result-indicator" aria-hidden="true">
+              {predictionResult === 'exact' ? '+3' : predictionResult === 'correct' ? '+1' : '×'}
+            </span>
+          ) : null}
           {predictionLabel}: {prediction.home}-{prediction.away}
           {match.status === 'FINAL' ? ` · ${prediction.points} pts` : ''}
         </div>

@@ -115,18 +115,20 @@ function formatDayLabel(dayKey: string): string {
 
 function rankRows(rows: RankingRow[]): Array<RankingRow & { position: number }> {
   let previousPoints: number | null = null;
-  let previousPosition = 0;
+  let currentPosition = 0;
 
   return [...rows]
     .sort((a, b) => {
       if (b.total_points !== a.total_points) return b.total_points - a.total_points;
       return a.display_name.localeCompare(b.display_name);
     })
-    .map((row, index) => {
-      const position = previousPoints === row.total_points ? previousPosition : index + 1;
+    .map((row) => {
+      if (previousPoints !== row.total_points) {
+        currentPosition += 1;
+      }
+
       previousPoints = row.total_points;
-      previousPosition = position;
-      return { ...row, position };
+      return { ...row, position: currentPosition };
     });
 }
 
@@ -136,11 +138,11 @@ function getPredictionState(match: Match, prediction: PredictionLogRow | undefin
   return prediction.points_awarded > 0 ? 'scored' : 'missed';
 }
 
-function stateCopy(state: PredictionState): { label: string; symbol: string } {
-  if (state === 'exact') return { label: 'Exacto', symbol: '👑' };
-  if (state === 'scored') return { label: 'Sumó', symbol: '✓' };
-  if (state === 'missed') return { label: 'Falló', symbol: '×' };
-  return { label: 'Sin apuesta', symbol: '-' };
+function stateCopy(state: PredictionState): { label: string } {
+  if (state === 'exact') return { label: 'Exacto' };
+  if (state === 'scored') return { label: 'Sumó' };
+  if (state === 'missed') return { label: 'Falló' };
+  return { label: 'Sin apuesta' };
 }
 
 export function RankingUserPage() {
@@ -336,9 +338,12 @@ export function RankingUserPage() {
                               </h4>
                             </div>
                             <div className="ranking-history-card__prediction">
-                              <strong>
-                                {copy.symbol} {copy.label}
-                              </strong>
+                              {item.state === 'exact' || item.state === 'scored' || item.state === 'missed' ? (
+                                <span className="prediction-result-indicator" aria-hidden="true">
+                                  {item.state === 'exact' ? '+3' : item.state === 'scored' ? '+1' : '×'}
+                                </span>
+                              ) : null}
+                              <strong>{copy.label}</strong>
                               <span>
                                 {item.prediction
                                   ? `${item.prediction.predicted_home_score}-${item.prediction.predicted_away_score} · +${item.prediction.points_awarded} pts`

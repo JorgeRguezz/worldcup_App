@@ -17,8 +17,7 @@ type RankedViewRow = {
   key: string;
   position: number;
   name: string;
-  matchPoints: number;
-  specialPoints: number;
+  predictionCount: number;
   totalPoints: number;
 };
 
@@ -54,6 +53,18 @@ type LogUser = {
   displayName: string;
 };
 
+type PredictionCountRow = {
+  user_id: string;
+  prediction_count: number;
+};
+
+function podiumEmoji(position: number): string | null {
+  if (position === 1) return '🏆';
+  if (position === 2) return '🥈';
+  if (position === 3) return '🥉';
+  return null;
+}
+
 function toMatch(row: MatchRow): Match {
   return {
     id: row.id,
@@ -74,26 +85,27 @@ function toMatch(row: MatchRow): Match {
   };
 }
 
-function rankRows(rows: RankingRow[]): RankedViewRow[] {
+function rankRows(rows: RankingRow[], predictionCounts: Record<string, number>): RankedViewRow[] {
   let previousPoints: number | null = null;
-  let previousPosition = 0;
+  let currentPosition = 0;
 
   return [...rows]
     .sort((a, b) => {
       if (b.total_points !== a.total_points) return b.total_points - a.total_points;
       return a.display_name.localeCompare(b.display_name);
     })
-    .map((row, index) => {
-      const position = previousPoints === row.total_points ? previousPosition : index + 1;
+    .map((row) => {
+      if (previousPoints !== row.total_points) {
+        currentPosition += 1;
+      }
+
       previousPoints = row.total_points;
-      previousPosition = position;
 
       return {
         key: row.user_id ?? row.display_name,
-        position,
+        position: currentPosition,
         name: row.display_name,
-        matchPoints: row.match_points,
-        specialPoints: row.special_points,
+        predictionCount: row.user_id ? (predictionCounts[row.user_id] ?? 0) : 0,
         totalPoints: row.total_points,
       };
     });
@@ -110,6 +122,7 @@ export function RankingPage() {
   );
   const [matches, setMatches] = useState<Match[]>(isSupabaseConfigured ? [] : demoMatches);
   const [predictionLogs, setPredictionLogs] = useState<PredictionLogRow[]>([]);
+  const [predictionCounts, setPredictionCounts] = useState<Record<string, number>>({});
   const [isLoading, setIsLoading] = useState(isSupabaseConfigured);
   const [message, setMessage] = useState('');
 
@@ -122,7 +135,7 @@ export function RankingPage() {
       setIsLoading(true);
       setMessage('');
 
-      const [rankingResult, matchResult, predictionLogResult] = await Promise.all([
+      const [rankingResult, matchResult, predictionLogResult, predictionCountResult] = await Promise.all([
         supabase!
           .from('ranking')
           .select('user_id, display_name, match_points, special_points, total_points')
@@ -136,6 +149,7 @@ export function RankingPage() {
           .eq('status', 'FINAL')
           .order('kickoff_at', { ascending: false }),
         supabase!.rpc('visible_match_predictions'),
+        supabase!.rpc('ranking_prediction_counts'),
       ]);
 
       if (!isMounted) return;
@@ -158,6 +172,14 @@ export function RankingPage() {
         setPredictionLogs((predictionLogResult.data ?? []) as PredictionLogRow[]);
       }
 
+      if (!predictionCountResult.error) {
+        setPredictionCounts(
+          Object.fromEntries(
+            ((predictionCountResult.data ?? []) as PredictionCountRow[]).map((row) => [row.user_id, row.prediction_count]),
+          ),
+        );
+      }
+
       setIsLoading(false);
     }
 
@@ -168,7 +190,7 @@ export function RankingPage() {
     };
   }, []);
 
-  const rankedRows = useMemo(() => rankRows(rows), [rows]);
+  const rankedRows = useMemo(() => rankRows(rows, predictionCounts), [predictionCounts, rows]);
   const logUsers = useMemo<LogUser[]>(
     () =>
       rows
@@ -197,7 +219,7 @@ export function RankingPage() {
     <section className="page ranking-page">
       <div className="page-heading">
         <div>
-          <p className="eyebrow">Puntos de partidos + especiales</p>
+          <p className="eyebrow">Puntos totales de la porra</p>
           <h1>Ranking global</h1>
         </div>
       </div>
@@ -210,25 +232,35 @@ export function RankingPage() {
           <span>Pos.</span>
           <span>Nombre</span>
           <span>Partidos</span>
-          <span>Especiales</span>
           <span>Total</span>
         </div>
         {rankedRows.length > 0 ? (
-          rankedRows.map((row) => (
-            <div className="ranking-row" key={row.key}>
-              <span>{row.position}</span>
-              {row.key ? (
-                <Link className="ranking-user-link" to={`/ranking/usuario/${row.key}`}>
-                  {row.name}
-                </Link>
-              ) : (
-                <strong>{row.name}</strong>
-              )}
-              <span>{row.matchPoints}</span>
-              <span>{row.specialPoints}</span>
-              <span>{row.totalPoints}</span>
-            </div>
-          ))
+          rankedRows.map((row) => {
+            const podium = podiumEmoji(row.position);
+
+            return (
+              <div className="ranking-row" key={row.key}>
+                <span className="ranking-position">
+                  {podium ? (
+                    <span className="ranking-position__podium" aria-label={`Puesto ${row.position}`}>
+                      {podium}
+                    </span>
+                  ) : (
+                    row.position
+                  )}
+                </span>
+                {row.key ? (
+                  <Link className="ranking-user-link" to={`/ranking/usuario/${row.key}`}>
+                    {row.name}
+                  </Link>
+                ) : (
+                  <strong>{row.name}</strong>
+                )}
+                <span>{row.predictionCount}</span>
+                <span>{row.totalPoints}</span>
+              </div>
+            );
+          })
         ) : (
           <p className="empty-state">Todavía no hay usuarios registrados en el ranking.</p>
         )}

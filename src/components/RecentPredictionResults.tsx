@@ -1,4 +1,3 @@
-import { Crown } from 'lucide-react';
 import { flagForTeamId } from '../data/teamFlags';
 import { teamName } from '../data/demoTournament';
 import type { Match } from '../domain/worldCupEngine';
@@ -62,11 +61,9 @@ export function RecentPredictionResults({ matches, predictions }: RecentPredicti
                 key={match.id}
                 aria-label={`${teamName(match.homeTeamId)} ${score} ${teamName(match.awayTeamId)}`}
               >
-                {state === 'exact' ? (
-                  <span className="recent-prediction-result__crown" aria-label="Marcador exacto">
-                    <Crown size={15} />
-                  </span>
-                ) : null}
+                <span className="prediction-result-indicator" aria-hidden="true">
+                  {state === 'exact' ? '+3' : state === 'outcome' ? '+1' : '×'}
+                </span>
                 <span className="recent-prediction-result__flag" aria-hidden="true">
                   {homeFlag}
                 </span>

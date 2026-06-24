@@ -1,17 +1,10 @@
-import { ArrowDown, ArrowRight, ArrowUp, CalendarDays, ChevronLeft, ChevronRight, Crown, Minus, Target } from 'lucide-react';
+import { ArrowDown, ArrowRight, ArrowUp, CalendarDays, ChevronLeft, ChevronRight, Minus, Target } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { MatchCard } from '../../components/MatchCard';
 import { RecentPredictionResults } from '../../components/RecentPredictionResults';
 import { demoMatches, demoRanking, teamName } from '../../data/demoTournament';
-import {
-  compareOutcome,
-  type DecidedBy,
-  type GroupLetter,
-  type Match,
-  type MatchStatus,
-  type Stage,
-} from '../../domain/worldCupEngine';
+import { type DecidedBy, type GroupLetter, type Match, type MatchStatus, type Stage } from '../../domain/worldCupEngine';
 import { formatMadridDateTime, formatScore } from '../../lib/format';
 import { formatRankingPosition } from '../../lib/ranking';
 import { isSupabaseConfigured, supabase } from '../../lib/supabase';
@@ -100,18 +93,20 @@ function toMatch(row: MatchRow): Match {
 
 function rankRows(rows: RankingRow[]): RankedRow[] {
   let previousPoints: number | null = null;
-  let previousPosition = 0;
+  let currentPosition = 0;
 
   return [...rows]
     .sort((a, b) => {
       if (b.total_points !== a.total_points) return b.total_points - a.total_points;
       return a.display_name.localeCompare(b.display_name);
     })
-    .map((row, index) => {
-      const position = previousPoints === row.total_points ? previousPosition : index + 1;
+    .map((row) => {
+      if (previousPoints !== row.total_points) {
+        currentPosition += 1;
+      }
+
       previousPoints = row.total_points;
-      previousPosition = position;
-      return { ...row, position };
+      return { ...row, position: currentPosition };
     });
 }
 
@@ -119,18 +114,12 @@ function getPredictionState(match: Match, prediction: PredictionRow | undefined)
   if (!prediction) return 'none';
   if (match.status !== 'FINAL' || match.homeScore === null || match.awayScore === null) return 'pending';
   if (prediction.predicted_home_score === match.homeScore && prediction.predicted_away_score === match.awayScore) return 'exact';
-  if (
-    compareOutcome(prediction.predicted_home_score, prediction.predicted_away_score) ===
-    compareOutcome(match.homeScore, match.awayScore)
-  ) {
-    return 'outcome';
-  }
-  return 'miss';
+  return prediction.points_awarded > 0 ? 'outcome' : 'miss';
 }
 
 function predictionStateCopy(state: PredictionState): { label: string; tone: string } {
-  if (state === 'exact') return { label: 'Marcador exacto', tone: 'good' };
-  if (state === 'outcome') return { label: 'Signo acertado', tone: 'warn' };
+  if (state === 'exact') return { label: 'Marcador exacto', tone: 'warn' };
+  if (state === 'outcome') return { label: 'Signo acertado', tone: 'good' };
   if (state === 'miss') return { label: 'Fallada', tone: 'danger' };
   if (state === 'pending') return { label: 'Pendiente', tone: 'neutral' };
   return { label: 'Sin predicción', tone: 'neutral' };
@@ -506,9 +495,15 @@ export function DashboardPage() {
                 <div className="public-predictions" ref={publicPredictionsRef}>
                 {visiblePredictionGroups.map((group) => (
                   <article className="public-prediction-match" key={group.match.id}>
-                    <h4>
-                      {teamName(group.match.homeTeamId)} vs {teamName(group.match.awayTeamId)}
-                    </h4>
+                    <div className="public-prediction-match__header">
+                      <h4>
+                        {teamName(group.match.homeTeamId)} vs {teamName(group.match.awayTeamId)}
+                      </h4>
+                      <span className="match-card__state match-card__state--locked">
+                        <span className="match-card__state-dot" />
+                        En juego
+                      </span>
+                    </div>
                     <div className="public-prediction-match__rows">
                       {group.predictions.map((prediction) => (
                         <div className="public-prediction-row" key={`${prediction.match_id}-${prediction.user_id}`}>
@@ -542,7 +537,7 @@ export function DashboardPage() {
                 </button>
               </>
             ) : (
-              <p className="empty-state">Cuando haya partidos no finalizados con porras visibles de otros usuarios, aparecerán aquí.</p>
+              <p className="empty-state">Solo podrás ver las apuestas de los demás cuando el partido esté en juego.</p>
             )}
           </div>
         </section>
@@ -562,10 +557,10 @@ export function DashboardPage() {
 
               return (
                 <article className={resultCardClassName(state)} key={match.id}>
-                  {state === 'exact' ? (
-                    <div className="result-card__crown" aria-label="Marcador exacto">
-                      <Crown size={24} />
-                    </div>
+                  {state === 'exact' || state === 'outcome' || state === 'miss' ? (
+                    <span className="prediction-result-indicator" aria-hidden="true">
+                      {state === 'exact' ? '+3' : state === 'outcome' ? '+1' : '×'}
+                    </span>
                   ) : null}
                   <div>
                     <p className="eyebrow">{formatMadridDateTime(match.kickoffAt)}</p>

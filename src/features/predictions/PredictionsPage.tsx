@@ -380,8 +380,30 @@ export function PredictionsPage() {
     const predictionForCard = displayPrediction
       ? { home: Number(displayPrediction.home), away: Number(displayPrediction.away), points: displayPrediction.points }
       : undefined;
-    const predictionResult = readOnly && predictionForCard ? (predictionForCard.points > 0 ? 'correct' : 'miss') : undefined;
+    const predictionResult =
+      readOnly && predictionForCard && match.homeScore !== null && match.awayScore !== null
+        ? predictionForCard.home === match.homeScore && predictionForCard.away === match.awayScore
+          ? 'exact'
+          : predictionForCard.points > 0
+            ? 'correct'
+            : 'miss'
+        : undefined;
     const isKnockoutDraw = match.stage !== 'GROUP' && draft !== undefined && draft.home !== '' && draft.away !== '' && draft.home === draft.away;
+
+    if (readOnly) {
+      return (
+        <MatchCard
+          key={match.id}
+          match={match}
+          prediction={predictionForCard}
+          predictionStatus={predictionStatus}
+          predictionResult={predictionResult}
+          glow={predictionResult}
+          statusTone="danger"
+          onTeamClick={showTeamProfile}
+        />
+      );
+    }
 
     return (
       <div className={`prediction-editor${editorGlowClass}`} key={match.id}>
