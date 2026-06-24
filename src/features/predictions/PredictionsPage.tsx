@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { MatchCard } from '../../components/MatchCard';
 import { RecentPredictionResults } from '../../components/RecentPredictionResults';
+import { SearchSelect } from '../../components/SearchSelect';
 import { TeamProfile } from '../../components/TeamProfile';
 import { PLAYER_CANDIDATES } from '../../data/playerCandidates';
 import { demoMatches, teamName } from '../../data/demoTournament';
@@ -615,41 +616,8 @@ export function PredictionsPage() {
     );
   };
 
-  const renderSpecialField = (
-    label: string,
-    value: string,
-    onChange: (value: string) => void,
-    listId: string,
-    points: number,
-    placeholder: string,
-  ) => (
-    <label>
-      <span>
-        {label} <b>+{points} pts</b>
-      </span>
-      <input
-        list={listId}
-        placeholder={placeholder}
-        value={value}
-        disabled={specialClosed || isSavingSpecial}
-        onChange={(event) => onChange(event.target.value)}
-      />
-    </label>
-  );
-
   const renderSpecialPredictionSection = () => (
     <section className={`special-prediction-card${specialClosed ? ' special-prediction-card--closed' : ''}`}>
-      <datalist id="special-team-candidates">
-        {teamOptions.map((team) => (
-          <option key={team.id} value={team.label} />
-        ))}
-      </datalist>
-      <datalist id="special-player-candidates">
-        {PLAYER_CANDIDATES.map((player) => (
-          <option key={player} value={player} />
-        ))}
-      </datalist>
-
       <div className="special-prediction-card__header">
         <div>
           <p className="eyebrow">Antes de eliminatorias</p>
@@ -675,10 +643,42 @@ export function PredictionsPage() {
       </div>
 
       <div className="special-prediction-form">
-        {renderSpecialField('Ganador del Mundial', specialDraft.champion, (value) => updateSpecialDraft({ champion: value }), 'special-team-candidates', SPECIAL_PREDICTION_POINTS.champion, 'Empieza a escribir un país')}
-        {renderSpecialField('Mejor jugador', specialDraft.bestPlayer, (value) => updateSpecialDraft({ bestPlayer: value }), 'special-player-candidates', SPECIAL_PREDICTION_POINTS.bestPlayer, 'Empieza a escribir un jugador')}
-        {renderSpecialField('Máximo goleador', specialDraft.topScorer, (value) => updateSpecialDraft({ topScorer: value }), 'special-player-candidates', SPECIAL_PREDICTION_POINTS.topScorer, 'Empieza a escribir un jugador')}
-        {renderSpecialField('Máximo asistente', specialDraft.topAssist, (value) => updateSpecialDraft({ topAssist: value }), 'special-player-candidates', SPECIAL_PREDICTION_POINTS.topAssist, 'Empieza a escribir un jugador')}
+        <SearchSelect
+          label="Ganador del Mundial"
+          value={specialDraft.champion}
+          options={teamOptions.map((team) => team.label)}
+          points={SPECIAL_PREDICTION_POINTS.champion}
+          placeholder="Empieza a escribir un país"
+          disabled={specialClosed || isSavingSpecial}
+          onChange={(value) => updateSpecialDraft({ champion: value })}
+        />
+        <SearchSelect
+          label="Mejor jugador"
+          value={specialDraft.bestPlayer}
+          options={PLAYER_CANDIDATES}
+          points={SPECIAL_PREDICTION_POINTS.bestPlayer}
+          placeholder="Empieza a escribir un jugador"
+          disabled={specialClosed || isSavingSpecial}
+          onChange={(value) => updateSpecialDraft({ bestPlayer: value })}
+        />
+        <SearchSelect
+          label="Máximo goleador"
+          value={specialDraft.topScorer}
+          options={PLAYER_CANDIDATES}
+          points={SPECIAL_PREDICTION_POINTS.topScorer}
+          placeholder="Empieza a escribir un jugador"
+          disabled={specialClosed || isSavingSpecial}
+          onChange={(value) => updateSpecialDraft({ topScorer: value })}
+        />
+        <SearchSelect
+          label="Máximo asistente"
+          value={specialDraft.topAssist}
+          options={PLAYER_CANDIDATES}
+          points={SPECIAL_PREDICTION_POINTS.topAssist}
+          placeholder="Empieza a escribir un jugador"
+          disabled={specialClosed || isSavingSpecial}
+          onChange={(value) => updateSpecialDraft({ topAssist: value })}
+        />
       </div>
 
       <div className="special-prediction-card__footer">

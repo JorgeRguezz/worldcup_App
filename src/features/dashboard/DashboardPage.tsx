@@ -341,6 +341,7 @@ export function DashboardPage() {
   const specialDeadline = useMemo(() => getSpecialPredictionDeadline(matches), [matches]);
   const isSpecialClosed = now >= specialDeadline.getTime();
   const specialCountdown = formatCountdown(specialDeadline, now);
+  const publicSpecialPredictions = isSpecialClosed ? visibleSpecialPredictions : [];
   const currentUserRank = rankedRows.find((row) => row.user_id === userId) ?? null;
   const currentUserDelta = dailyDeltas.find((row) => row.user_id === userId) ?? null;
   const todayPoints = Object.values(predictions).reduce((total, prediction) => {
@@ -377,7 +378,7 @@ export function DashboardPage() {
         .slice(0, 6),
     [matches, userId, visiblePredictions],
   );
-  const visiblePublicPredictionGroupCount = visiblePredictionGroups.length + (visibleSpecialPredictions.length > 0 ? 1 : 0);
+  const visiblePublicPredictionGroupCount = visiblePredictionGroups.length + (publicSpecialPredictions.length > 0 ? 1 : 0);
   const updatePublicSliderState = useCallback(() => {
     const slider = publicPredictionsRef.current;
     if (!slider) {
@@ -563,9 +564,9 @@ export function DashboardPage() {
             <span>{visiblePublicPredictionGroupCount}</span>
           </div>
           <div className="table-card rank-predictions">
-            {visiblePredictionGroups.length > 0 || visibleSpecialPredictions.length > 0 ? (
+            {visiblePredictionGroups.length > 0 || publicSpecialPredictions.length > 0 ? (
               <>
-                {visibleSpecialPredictions.length > 0 ? (
+                {publicSpecialPredictions.length > 0 ? (
                   <article className="public-prediction-match public-prediction-match--special">
                     <div className="public-prediction-match__header">
                       <h4>Predicción especial</h4>
@@ -575,7 +576,7 @@ export function DashboardPage() {
                       </span>
                     </div>
                     <div className="public-prediction-match__rows">
-                      {visibleSpecialPredictions.map((prediction) => (
+                      {publicSpecialPredictions.map((prediction) => (
                         <div className="public-prediction-row public-prediction-row--special" key={`special-${prediction.user_id}`}>
                           <strong>{prediction.display_name}</strong>
                           <span>{teamName(prediction.champion_team_id)}</span>
