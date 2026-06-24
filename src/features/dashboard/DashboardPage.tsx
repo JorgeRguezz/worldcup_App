@@ -8,6 +8,13 @@ import { type DecidedBy, type GroupLetter, type Match, type MatchStatus, type St
 import { formatMadridDateTime, formatScore } from '../../lib/format';
 import { formatRankingPosition } from '../../lib/ranking';
 import { isSupabaseConfigured, supabase } from '../../lib/supabase';
+import {
+  formatCountdown,
+  getSpecialPredictionDeadline,
+  SPECIAL_PREDICTION_POINTS,
+  type SpecialPredictionRow,
+  type VisibleSpecialPredictionRow,
+} from '../../lib/specialPredictions';
 
 const MADRID_TIME_ZONE = 'Europe/Madrid';
 const PREDICTION_DAY_START_HOUR = 7;
@@ -183,6 +190,8 @@ export function DashboardPage() {
   const [matches, setMatches] = useState<Match[]>(isSupabaseConfigured ? [] : demoMatches);
   const [predictions, setPredictions] = useState<Record<string, PredictionRow>>({});
   const [visiblePredictions, setVisiblePredictions] = useState<Record<string, VisiblePredictionRow[]>>({});
+  const [specialPrediction, setSpecialPrediction] = useState<SpecialPredictionRow | null>(null);
+  const [visibleSpecialPredictions, setVisibleSpecialPredictions] = useState<VisibleSpecialPredictionRow[]>([]);
   const [dailyDeltas, setDailyDeltas] = useState<DailyDeltaRow[]>([]);
   const [isDailyDeltaReady, setIsDailyDeltaReady] = useState(!isSupabaseConfigured);
   const [rankingRows, setRankingRows] = useState<RankingRow[]>(
@@ -195,8 +204,14 @@ export function DashboardPage() {
   );
   const [isLoading, setIsLoading] = useState(isSupabaseConfigured);
   const [message, setMessage] = useState('');
+  const [now, setNow] = useState(Date.now());
   const publicPredictionsRef = useRef<HTMLDivElement | null>(null);
   const [publicSliderState, setPublicSliderState] = useState({ canGoLeft: false, canGoRight: false });
+
+  useEffect(() => {
+    const interval = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     if (!isSupabaseConfigured || !supabase) return;
@@ -214,7 +229,7 @@ export function DashboardPage() {
       setUserId(currentUserId);
       const yesterdayKey = addDaysToDayKey(getPredictionDayKey(new Date()), -1);
 
-      const [matchResult, rankingResult, predictionResult, deltaResult, visiblePredictionResult] = await Promise.all([
+      const [matchResult, rankingResult, predictionResult, deltaResult, visiblePredictionResult, specialPredictionResult, visibleSpecialResult] = await Promise.all([
         supabase!
           .from('matches')
           .select(
@@ -234,6 +249,16 @@ export function DashboardPage() {
           : Promise.resolve({ data: [], error: null }),
         supabase!.rpc('ranking_daily_delta', { p_day: yesterdayKey }),
         supabase!.rpc('visible_match_predictions'),
+        currentUserId
+          ? supabase!
+              .from('special_predictions')
+              .select(
+                'user_id, champion_team_id, best_player_name, top_scorer_player_name, top_assist_player_name, champion_points_awarded, best_player_points_awarded, top_scorer_points_awarded, top_assist_points_awarded, points_awarded, updated_at',
+              )
+              .eq('user_id', currentUserId)
+              .maybeSingle()
+          : Promise.resolve({ data: null, error: null }),
+        supabase!.rpc('visible_special_predictions'),
       ]);
 
       if (!isMounted) return;
@@ -267,6 +292,14 @@ export function DashboardPage() {
           return grouped;
         }, {});
         setVisiblePredictions(groupedPredictions);
+      }
+
+      if (!specialPredictionResult.error) {
+        setSpecialPrediction((specialPredictionResult.data as SpecialPredictionRow | null) ?? null);
+      }
+
+      if (!visibleSpecialResult.error) {
+        setVisibleSpecialPredictions((visibleSpecialResult.data ?? []) as VisibleSpecialPredictionRow[]);
       }
 
       setIsLoading(false);
@@ -305,6 +338,9 @@ export function DashboardPage() {
     [matches],
   );
   const rankedRows = useMemo(() => rankRows(rankingRows), [rankingRows]);
+  const specialDeadline = useMemo(() => getSpecialPredictionDeadline(matches), [matches]);
+  const isSpecialClosed = now >= specialDeadline.getTime();
+  const specialCountdown = formatCountdown(specialDeadline, now);
   const currentUserRank = rankedRows.find((row) => row.user_id === userId) ?? null;
   const currentUserDelta = dailyDeltas.find((row) => row.user_id === userId) ?? null;
   const todayPoints = Object.values(predictions).reduce((total, prediction) => {
@@ -341,6 +377,7 @@ export function DashboardPage() {
         .slice(0, 6),
     [matches, userId, visiblePredictions],
   );
+  const visiblePublicPredictionGroupCount = visiblePredictionGroups.length + (visibleSpecialPredictions.length > 0 ? 1 : 0);
   const updatePublicSliderState = useCallback(() => {
     const slider = publicPredictionsRef.current;
     if (!slider) {
@@ -384,6 +421,23 @@ export function DashboardPage() {
     window.setTimeout(updatePublicSliderState, 260);
   };
 
+  const renderSpecialPredictionSummary = (prediction: SpecialPredictionRow) => (
+    <div className="special-selection-list">
+      <span>
+        Campeón <b>{teamName(prediction.champion_team_id)}</b>
+      </span>
+      <span>
+        Mejor jugador <b>{prediction.best_player_name}</b>
+      </span>
+      <span>
+        Máximo goleador <b>{prediction.top_scorer_player_name}</b>
+      </span>
+      <span>
+        Máximo asistente <b>{prediction.top_assist_player_name}</b>
+      </span>
+    </div>
+  );
+
   return (
     <section className="page">
       <div className="page-heading">
@@ -416,6 +470,25 @@ export function DashboardPage() {
           <strong>{rankDeltaCopy.label}</strong>
         </article>
       </div>
+
+      <section className={`special-announcement${isSpecialClosed ? ' special-announcement--closed' : ''}`}>
+        <div className="special-announcement__content">
+          <p className="eyebrow">Predicción especial</p>
+          <h2>{isSpecialClosed ? 'La predicción especial está cerrada' : 'Última llamada antes de eliminatorias'}</h2>
+          <p>
+            Acierta el campeón {SPECIAL_PREDICTION_POINTS.champion} pts, mejor jugador {SPECIAL_PREDICTION_POINTS.bestPlayer} pts, goleador{' '}
+            {SPECIAL_PREDICTION_POINTS.topScorer} pts y asistente {SPECIAL_PREDICTION_POINTS.topAssist} pts.
+          </p>
+          {specialPrediction ? renderSpecialPredictionSummary(specialPrediction) : <p className="empty-state">Todavía no has guardado esta predicción.</p>}
+        </div>
+        <div className="special-announcement__action">
+          <strong className="countdown-alert">{isSpecialClosed ? 'Cerrada' : specialCountdown}</strong>
+          <span>Hasta {formatMadridDateTime(specialDeadline.toISOString())}</span>
+          <Link className="primary-link" to="/predicciones">
+            {specialPrediction ? 'Ver o modificar' : 'Registrar predicción'} <ArrowRight size={16} />
+          </Link>
+        </div>
+      </section>
 
       <RecentPredictionResults matches={matches} predictions={Object.fromEntries(Object.entries(predictions).map(([matchId, prediction]) => [matchId, {
         home: prediction.predicted_home_score,
@@ -487,11 +560,34 @@ export function DashboardPage() {
         <section className="prediction-section dashboard-public-section">
           <div className="section-heading">
             <h2>Qué han apostado</h2>
-            <span>{visiblePredictionGroups.length}</span>
+            <span>{visiblePublicPredictionGroupCount}</span>
           </div>
           <div className="table-card rank-predictions">
-            {visiblePredictionGroups.length > 0 ? (
+            {visiblePredictionGroups.length > 0 || visibleSpecialPredictions.length > 0 ? (
               <>
+                {visibleSpecialPredictions.length > 0 ? (
+                  <article className="public-prediction-match public-prediction-match--special">
+                    <div className="public-prediction-match__header">
+                      <h4>Predicción especial</h4>
+                      <span className="match-card__state match-card__state--locked">
+                        <span className="match-card__state-dot" />
+                        Cerrada
+                      </span>
+                    </div>
+                    <div className="public-prediction-match__rows">
+                      {visibleSpecialPredictions.map((prediction) => (
+                        <div className="public-prediction-row public-prediction-row--special" key={`special-${prediction.user_id}`}>
+                          <strong>{prediction.display_name}</strong>
+                          <span>{teamName(prediction.champion_team_id)}</span>
+                          <small>{prediction.best_player_name}</small>
+                          <small>{prediction.top_scorer_player_name}</small>
+                          <small>{prediction.top_assist_player_name}</small>
+                          <b>+{prediction.points_awarded}</b>
+                        </div>
+                      ))}
+                    </div>
+                  </article>
+                ) : null}
                 <div className="public-predictions" ref={publicPredictionsRef}>
                 {visiblePredictionGroups.map((group) => (
                   <article className="public-prediction-match" key={group.match.id}>
@@ -537,7 +633,9 @@ export function DashboardPage() {
                 </button>
               </>
             ) : (
-              <p className="empty-state">Solo podrás ver las apuestas de los demás cuando el partido esté en juego.</p>
+              <p className="empty-state">
+                Solo podrás ver las apuestas de los demás cuando el partido esté en juego. La predicción especial se verá al cerrar la fase de grupos.
+              </p>
             )}
           </div>
         </section>

@@ -288,6 +288,10 @@ a {
   line-height: 1.4;
 }
 
+.profile-card--wide {
+  grid-column: 1 / -1;
+}
+
 .split-section,
 .admin-grid {
   display: grid;
@@ -834,6 +838,166 @@ a {
   gap: 14px;
 }
 
+.special-announcement,
+.special-prediction-card {
+  display: grid;
+  gap: 16px;
+  border: 1px solid #f0b7ae;
+  border-radius: 8px;
+  background: #fff8f7;
+  padding: 18px;
+  box-shadow:
+    0 0 0 1px rgb(212 65 50 / 18%),
+    0 14px 34px rgb(212 65 50 / 10%);
+}
+
+.special-announcement {
+  grid-template-columns: minmax(0, 1fr) minmax(220px, auto);
+  align-items: center;
+}
+
+.special-announcement--closed,
+.special-prediction-card--closed {
+  border-color: #dce2da;
+  background: #ffffff;
+  box-shadow: 0 10px 30px rgb(20 40 30 / 6%);
+}
+
+.special-announcement h2,
+.special-prediction-card h3 {
+  margin: 0;
+}
+
+.special-announcement p,
+.special-prediction-card__header p {
+  margin: 6px 0 0;
+  color: #405048;
+  line-height: 1.45;
+}
+
+.special-announcement__action {
+  display: grid;
+  justify-items: end;
+  gap: 9px;
+}
+
+.special-announcement__action > span {
+  color: #607068;
+  font-size: 0.9rem;
+  text-align: right;
+}
+
+.countdown-alert {
+  width: fit-content;
+  border-radius: 999px;
+  background: #d44132;
+  padding: 8px 12px;
+  color: #ffffff;
+  font-size: 0.95rem;
+  font-weight: 900;
+  box-shadow: 0 8px 18px rgb(212 65 50 / 24%);
+}
+
+.special-prediction-card__header,
+.special-prediction-card__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.special-score-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.special-score-grid span {
+  display: grid;
+  grid-template-rows: 2.4em auto;
+  gap: 4px;
+  align-content: start;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 10px;
+  color: #607068;
+  font-size: 0.92rem;
+  font-weight: 800;
+  line-height: 1.15;
+}
+
+.special-score-grid b {
+  color: #1b8f5a;
+  font-size: 1.3rem;
+  line-height: 1;
+}
+
+.special-prediction-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.special-prediction-form label span {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.special-prediction-form b {
+  color: #1b8f5a;
+}
+
+.special-prediction-card__footer span {
+  color: #d44132;
+}
+
+.special-prediction-card__footer span {
+  font-weight: 800;
+}
+
+.special-selection-list {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.special-selection-list span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 10px;
+  color: #607068;
+  font-weight: 800;
+}
+
+.special-selection-list b,
+.special-selection-list strong {
+  color: #17211c;
+  overflow-wrap: anywhere;
+}
+
+.special-selection-list small {
+  color: #d44132;
+  font-weight: 900;
+}
+
+.special-selection-list--profile {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 0;
+}
+
+.special-selection-list--profile strong {
+  grid-column: 1 / -1;
+  border-radius: 8px;
+  background: #fff0ed;
+  padding: 10px;
+  color: #943326;
+}
+
 .prediction-buckets,
 .prediction-day {
   display: grid;
@@ -995,6 +1159,24 @@ a {
   border-radius: 8px;
   background: #ffffff;
   padding: 5px 8px;
+}
+
+.public-prediction-match--special {
+  border-top: 0;
+  border-bottom: 1px solid #edf0eb;
+  padding-bottom: 12px;
+}
+
+.public-prediction-row--special {
+  grid-template-columns: minmax(0, 1fr) minmax(90px, auto) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) auto;
+}
+
+.public-prediction-row--special span,
+.public-prediction-row--special small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #405048;
+  font-weight: 800;
 }
 
 .recent-results {
@@ -1954,6 +2136,8 @@ label {
   .profile-summary,
   .profile-grid,
   .prediction-grid,
+  .special-announcement,
+  .special-prediction-form,
   .standings-grid,
   .ranking-log-groups,
   .ranking-user-summary,
@@ -1963,6 +2147,27 @@ label {
   .rules-scoreboard__grid,
   .team-profile__columns {
     grid-template-columns: 1fr;
+  }
+
+  .special-selection-list,
+  .special-selection-list--profile {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .special-announcement__action,
+  .special-prediction-card__header,
+  .special-prediction-card__footer {
+    align-items: stretch;
+    justify-items: stretch;
+  }
+
+  .special-prediction-card__header,
+  .special-prediction-card__footer {
+    display: grid;
+  }
+
+  .special-announcement__action > span {
+    text-align: left;
   }
 
   .dashboard-public-section {
@@ -2117,5 +2322,11 @@ label {
   .prediction-badge {
     min-width: 0;
     text-align: left;
+  }
+
+  .special-selection-list,
+  .special-selection-list--profile,
+  .public-prediction-row--special {
+    grid-template-columns: 1fr;
   }
 }

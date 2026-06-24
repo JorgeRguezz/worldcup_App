@@ -16,12 +16,12 @@ export const DEFAULT_RULE_SECTIONS: RuleSection[] = [
   {
     id: 'puntuacion',
     title: 'Puntuación',
-    body: 'Fase de grupos: +3 puntos por marcador exacto.\nFase de grupos: +1 punto si aciertas ganador o empate, aunque falle el marcador.\nFase de grupos: +0 puntos si no aciertas el signo del partido.\nEliminatorias: los puntos suben por ronda.\nEn eliminatorias puedes puntuar por marcador exacto o por acertar quién pasa/gana.\nSi no aciertas ni marcador exacto ni clasificado correcto, sumas +0.',
+    body: 'Fase de grupos: +3 puntos por marcador exacto y +1 por acertar ganador o empate.\nDieciseisavos: +6 exacto y +2 clasificado.\nOctavos: +9 exacto y +3 clasificado.\nCuartos: +12 exacto y +4 clasificado.\nSemifinales: +15 exacto y +5 clasificado.\nTercer puesto: +12 exacto y +4 ganador.\nFinal: +24 exacto y +8 ganador.\nLa predicción especial suma: campeón +30, mejor jugador +20, máximo goleador +12 y máximo asistente +12.',
   },
   {
     id: 'como-se-juega',
     title: 'Cómo se juega',
-    body: 'Entrada: 5 euros por cabeza.\nPuedes votar hasta antes de que empiece el partido.\nCuando empieza el partido, esa predicción queda bloqueada.\nEn eliminatorias, si predices empate, tienes que elegir qué equipo pasa.\nEl ranking se actualiza con los puntos de cada partido.\nSi hay un caso raro, se decide entre todos con sentido común y buen rollo.',
+    body: 'Entrada: 5 euros por cabeza.\nPuedes votar cada partido hasta antes de que empiece.\nLa predicción especial se puede modificar hasta que termine la fase de grupos.\nCuando empieza un partido o cierra la fase de grupos, esa predicción queda bloqueada.\nEn eliminatorias, si predices empate, tienes que elegir qué equipo pasa.\nEl ranking se actualiza con los puntos de cada partido y con los premios oficiales al acabar el torneo.\nSi hay un caso raro, se decide entre todos con sentido común y buen rollo.',
   },
   {
     id: 'premios',

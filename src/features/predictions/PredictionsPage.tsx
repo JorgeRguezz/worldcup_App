@@ -4,9 +4,21 @@ import { Link } from 'react-router-dom';
 import { MatchCard } from '../../components/MatchCard';
 import { RecentPredictionResults } from '../../components/RecentPredictionResults';
 import { TeamProfile } from '../../components/TeamProfile';
+import { PLAYER_CANDIDATES } from '../../data/playerCandidates';
 import { demoMatches, teamName } from '../../data/demoTournament';
 import type { DecidedBy, GroupLetter, Match, MatchStatus, Stage } from '../../domain/worldCupEngine';
+import { formatMadridDateTime } from '../../lib/format';
 import { isSupabaseConfigured, supabase } from '../../lib/supabase';
+import {
+  formatCountdown,
+  getSpecialPredictionDeadline,
+  isMissingSpecialPredictionSchemaError,
+  isExactOption,
+  normalizeOption,
+  SPECIAL_PREDICTION_POINTS,
+  SPECIAL_PREDICTION_TOTAL_POINTS,
+  type SpecialPredictionRow,
+} from '../../lib/specialPredictions';
 
 type MatchRow = {
   id: string;
@@ -52,6 +64,13 @@ type PredictionUpsertRow = {
   predicted_home_score: number;
   predicted_away_score: number;
   predicted_advancing_team_id: string | null;
+};
+
+type SpecialPredictionDraft = {
+  champion: string;
+  bestPlayer: string;
+  topScorer: string;
+  topAssist: string;
 };
 
 const MADRID_TIME_ZONE = 'Europe/Madrid';
@@ -129,11 +148,25 @@ export function PredictionsPage() {
   const [matches, setMatches] = useState<Match[]>(isSupabaseConfigured ? [] : demoMatches);
   const [drafts, setDrafts] = useState<Record<string, DraftPrediction>>({});
   const [savedPredictions, setSavedPredictions] = useState<Record<string, DraftPrediction>>({});
+  const [specialPrediction, setSpecialPrediction] = useState<SpecialPredictionRow | null>(null);
+  const [specialDraft, setSpecialDraft] = useState<SpecialPredictionDraft>({
+    champion: '',
+    bestPlayer: '',
+    topScorer: '',
+    topAssist: '',
+  });
   const [isLoading, setIsLoading] = useState(isSupabaseConfigured);
   const [savingMatchId, setSavingMatchId] = useState<string | null>(null);
+  const [isSavingSpecial, setIsSavingSpecial] = useState(false);
   const [message, setMessage] = useState('');
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
+  const [now, setNow] = useState(Date.now());
   const teamProfileRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     if (!isSupabaseConfigured || !supabase) return;
@@ -155,7 +188,11 @@ export function PredictionsPage() {
 
       setUserId(userResult.user.id);
 
-      const [{ data: matchRows, error: matchError }, { data: predictionRows, error: predictionError }] = await Promise.all([
+      const [
+        { data: matchRows, error: matchError },
+        { data: predictionRows, error: predictionError },
+        { data: specialPredictionRow, error: specialPredictionError },
+      ] = await Promise.all([
         supabase!
           .from('matches')
           .select(
@@ -166,6 +203,13 @@ export function PredictionsPage() {
           .from('predictions')
           .select('match_id, predicted_home_score, predicted_away_score, predicted_advancing_team_id, points_awarded')
           .eq('user_id', userResult.user.id),
+        supabase!
+          .from('special_predictions')
+          .select(
+            'user_id, champion_team_id, best_player_name, top_scorer_player_name, top_assist_player_name, champion_points_awarded, best_player_points_awarded, top_scorer_points_awarded, top_assist_points_awarded, points_awarded, updated_at',
+          )
+          .eq('user_id', userResult.user.id)
+          .maybeSingle(),
       ]);
 
       if (!isMounted) return;
@@ -193,6 +237,19 @@ export function PredictionsPage() {
         );
         setDrafts(nextDrafts);
         setSavedPredictions(nextDrafts);
+      }
+
+      if (specialPredictionError && !isMissingSpecialPredictionSchemaError(specialPredictionError)) {
+        setMessage(`No pude cargar tu predicción especial: ${specialPredictionError.message}`);
+      } else if (specialPredictionRow) {
+        const nextSpecialPrediction = specialPredictionRow as SpecialPredictionRow;
+        setSpecialPrediction(nextSpecialPrediction);
+        setSpecialDraft({
+          champion: teamName(nextSpecialPrediction.champion_team_id),
+          bestPlayer: nextSpecialPrediction.best_player_name,
+          topScorer: nextSpecialPrediction.top_scorer_player_name,
+          topAssist: nextSpecialPrediction.top_assist_player_name,
+        });
       }
 
       setIsLoading(false);
@@ -233,6 +290,23 @@ export function PredictionsPage() {
     ].filter((bucket) => bucket.matches.length > 0);
   }, [orderedMatches.available]);
   const availablePredictionMatches = useMemo(() => availableBuckets.flatMap((bucket) => bucket.matches), [availableBuckets]);
+  const teamOptions = useMemo(() => {
+    const teamIds = new Set<string>();
+    matches
+      .filter((match) => match.stage === 'GROUP')
+      .forEach((match) => {
+        if (match.homeTeamId) teamIds.add(match.homeTeamId);
+        if (match.awayTeamId) teamIds.add(match.awayTeamId);
+      });
+
+    return [...teamIds]
+      .map((id) => ({ id, label: teamName(id) }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [matches]);
+  const specialDeadline = useMemo(() => getSpecialPredictionDeadline(matches), [matches]);
+  const specialClosed = now >= specialDeadline.getTime();
+  const specialCountdown = formatCountdown(specialDeadline, now);
+  const specialStatusCopy = specialClosed ? 'Cerrada' : `Cierra en ${specialCountdown}`;
 
   const updateDraft = (matchId: string, patch: Partial<DraftPrediction>) => {
     setDrafts((current) => ({
@@ -300,6 +374,83 @@ export function PredictionsPage() {
       predicted_away_score: away,
       predicted_advancing_team_id: isKnockoutDraw ? draft.advancingTeamId : null,
     };
+  };
+
+  const updateSpecialDraft = (patch: Partial<SpecialPredictionDraft>) => {
+    setSpecialDraft((current) => ({ ...current, ...patch }));
+  };
+
+  const resolveTeamId = (label: string): string | null => {
+    const normalizedLabel = normalizeOption(label);
+    return teamOptions.find((team) => normalizeOption(team.label) === normalizedLabel)?.id ?? null;
+  };
+
+  const saveSpecialPrediction = async () => {
+    if (!isSupabaseConfigured || !supabase) {
+      setMessage('Configura Supabase para guardar predicciones reales.');
+      return;
+    }
+
+    if (!userId) {
+      setMessage('Inicia sesión antes de guardar predicciones.');
+      return;
+    }
+
+    if (specialClosed) {
+      setMessage('La predicción especial ya está cerrada.');
+      return;
+    }
+
+    const championTeamId = resolveTeamId(specialDraft.champion);
+    if (!championTeamId) {
+      setMessage('Elige un ganador del Mundial de la lista de países participantes.');
+      return;
+    }
+
+    if (!isExactOption(specialDraft.bestPlayer, [...PLAYER_CANDIDATES])) {
+      setMessage('Elige el mejor jugador desde la lista de candidatos.');
+      return;
+    }
+
+    if (!isExactOption(specialDraft.topScorer, [...PLAYER_CANDIDATES])) {
+      setMessage('Elige el máximo goleador desde la lista de candidatos.');
+      return;
+    }
+
+    if (!isExactOption(specialDraft.topAssist, [...PLAYER_CANDIDATES])) {
+      setMessage('Elige el máximo asistente desde la lista de candidatos.');
+      return;
+    }
+
+    setIsSavingSpecial(true);
+    setMessage('');
+
+    const { data, error } = await supabase
+      .from('special_predictions')
+      .upsert(
+        {
+          user_id: userId,
+          champion_team_id: championTeamId,
+          best_player_name: specialDraft.bestPlayer.trim(),
+          top_scorer_player_name: specialDraft.topScorer.trim(),
+          top_assist_player_name: specialDraft.topAssist.trim(),
+        },
+        { onConflict: 'user_id' },
+      )
+      .select(
+        'user_id, champion_team_id, best_player_name, top_scorer_player_name, top_assist_player_name, champion_points_awarded, best_player_points_awarded, top_scorer_points_awarded, top_assist_points_awarded, points_awarded, updated_at',
+      )
+      .single();
+
+    setIsSavingSpecial(false);
+
+    if (error) {
+      setMessage(`No se pudo guardar la predicción especial: ${error.message}`);
+      return;
+    }
+
+    setSpecialPrediction(data as SpecialPredictionRow);
+    setMessage(specialPrediction ? 'Predicción especial modificada.' : 'Predicción especial guardada.');
   };
 
   const savePrediction = async (match: Match) => {
@@ -464,6 +615,86 @@ export function PredictionsPage() {
     );
   };
 
+  const renderSpecialField = (
+    label: string,
+    value: string,
+    onChange: (value: string) => void,
+    listId: string,
+    points: number,
+    placeholder: string,
+  ) => (
+    <label>
+      <span>
+        {label} <b>+{points} pts</b>
+      </span>
+      <input
+        list={listId}
+        placeholder={placeholder}
+        value={value}
+        disabled={specialClosed || isSavingSpecial}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    </label>
+  );
+
+  const renderSpecialPredictionSection = () => (
+    <section className={`special-prediction-card${specialClosed ? ' special-prediction-card--closed' : ''}`}>
+      <datalist id="special-team-candidates">
+        {teamOptions.map((team) => (
+          <option key={team.id} value={team.label} />
+        ))}
+      </datalist>
+      <datalist id="special-player-candidates">
+        {PLAYER_CANDIDATES.map((player) => (
+          <option key={player} value={player} />
+        ))}
+      </datalist>
+
+      <div className="special-prediction-card__header">
+        <div>
+          <p className="eyebrow">Antes de eliminatorias</p>
+          <h3>Predicción especial</h3>
+          <p>Se puede modificar hasta el final de la fase de grupos: {formatMadridDateTime(specialDeadline.toISOString())}.</p>
+        </div>
+        <strong className="countdown-alert">{specialStatusCopy}</strong>
+      </div>
+
+      <div className="special-score-grid" aria-label="Puntuación de la predicción especial">
+        <span>
+          Campeón <b>+{SPECIAL_PREDICTION_POINTS.champion}</b>
+        </span>
+        <span>
+          Mejor jugador <b>+{SPECIAL_PREDICTION_POINTS.bestPlayer}</b>
+        </span>
+        <span>
+          Máximo goleador <b>+{SPECIAL_PREDICTION_POINTS.topScorer}</b>
+        </span>
+        <span>
+          Máximo asistente <b>+{SPECIAL_PREDICTION_POINTS.topAssist}</b>
+        </span>
+      </div>
+
+      <div className="special-prediction-form">
+        {renderSpecialField('Ganador del Mundial', specialDraft.champion, (value) => updateSpecialDraft({ champion: value }), 'special-team-candidates', SPECIAL_PREDICTION_POINTS.champion, 'Empieza a escribir un país')}
+        {renderSpecialField('Mejor jugador', specialDraft.bestPlayer, (value) => updateSpecialDraft({ bestPlayer: value }), 'special-player-candidates', SPECIAL_PREDICTION_POINTS.bestPlayer, 'Empieza a escribir un jugador')}
+        {renderSpecialField('Máximo goleador', specialDraft.topScorer, (value) => updateSpecialDraft({ topScorer: value }), 'special-player-candidates', SPECIAL_PREDICTION_POINTS.topScorer, 'Empieza a escribir un jugador')}
+        {renderSpecialField('Máximo asistente', specialDraft.topAssist, (value) => updateSpecialDraft({ topAssist: value }), 'special-player-candidates', SPECIAL_PREDICTION_POINTS.topAssist, 'Empieza a escribir un jugador')}
+      </div>
+
+      <div className="special-prediction-card__footer">
+        <span>
+          {specialPrediction
+            ? `Guardada. Puede sumar hasta ${SPECIAL_PREDICTION_TOTAL_POINTS} puntos.`
+            : `Completa los cuatro campos para optar a ${SPECIAL_PREDICTION_TOTAL_POINTS} puntos.`}
+        </span>
+        <button className="primary-button" type="button" disabled={specialClosed || isSavingSpecial} onClick={() => void saveSpecialPrediction()}>
+          {specialPrediction ? <PencilLine size={16} /> : <Save size={16} />}
+          {specialClosed ? 'Predicción cerrada' : specialPrediction ? (isSavingSpecial ? 'Modificando...' : 'Modificar especial') : isSavingSpecial ? 'Guardando...' : 'Guardar especial'}
+        </button>
+      </div>
+    </section>
+  );
+
   return (
     <section className="page">
       <div className="page-heading">
@@ -501,6 +732,7 @@ export function PredictionsPage() {
           <h2>Disponibles</h2>
           <span>{availablePredictionMatches.length}</span>
         </div>
+        {renderSpecialPredictionSection()}
         {availableBuckets.length > 0 ? (
           <div className="prediction-buckets">
             {availableBuckets.map((bucket) => (

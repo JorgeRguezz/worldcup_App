@@ -15,7 +15,7 @@ describe('prediction scoring', () => {
         { home: 1, away: 1, winnerTeamId: 'home' },
         'FINAL',
       ),
-    ).toBe(30);
+    ).toBe(24);
   });
 
   it('scores knockout advancing team by stage', () => {

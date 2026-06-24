@@ -1,11 +1,13 @@
 import { RotateCcw, Save } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Navigate } from 'react-router-dom';
+import { PLAYER_CANDIDATES } from '../../data/playerCandidates';
 import { withFlag } from '../../data/teamFlags';
 import type { DecidedBy, GroupLetter, Match, MatchStatus, Stage } from '../../domain/worldCupEngine';
 import { DEFAULT_RULE_SECTIONS, normalizeRulesContent, type RuleSection } from '../rules/rulesContent';
 import { formatMadridDateTime, formatScore } from '../../lib/format';
 import { isSupabaseConfigured, supabase } from '../../lib/supabase';
+import { isMissingSpecialPredictionSchemaError } from '../../lib/specialPredictions';
 
 type MatchRow = {
   id: string;
@@ -39,6 +41,13 @@ type AppRulesRow = {
   version: number;
   sections: RuleSection[];
   updated_at: string | null;
+};
+
+type OfficialAwardsRow = {
+  champion_team_id: string | null;
+  best_player_name: string | null;
+  top_scorer_player_name: string | null;
+  top_assist_player_name: string | null;
 };
 
 type AdminAccessStatus = 'checking' | 'allowed' | 'denied';
@@ -97,6 +106,7 @@ export function AdminPage() {
   const [accessStatus, setAccessStatus] = useState<AdminAccessStatus>(isSupabaseConfigured ? 'checking' : 'denied');
   const [isLoading, setIsLoading] = useState(isSupabaseConfigured);
   const [isSaving, setIsSaving] = useState(false);
+  const [isAwardsSaving, setIsAwardsSaving] = useState(false);
   const [isRulesSaving, setIsRulesSaving] = useState(false);
   const [matches, setMatches] = useState<Match[]>([]);
   const [teams, setTeams] = useState<Record<string, TeamRow>>({});
@@ -107,6 +117,10 @@ export function AdminPage() {
   const [awayScore, setAwayScore] = useState('');
   const [decidedBy, setDecidedBy] = useState<DecidedBy>('NORMAL_TIME');
   const [winnerTeamId, setWinnerTeamId] = useState('');
+  const [awardChampionTeamId, setAwardChampionTeamId] = useState('');
+  const [awardBestPlayer, setAwardBestPlayer] = useState('');
+  const [awardTopScorer, setAwardTopScorer] = useState('');
+  const [awardTopAssist, setAwardTopAssist] = useState('');
   const [message, setMessage] = useState('');
 
   const selectedMatch = useMemo(
@@ -170,6 +184,7 @@ export function AdminPage() {
       { data: matchRows, error: matchError },
       { data: teamRows, error: teamError },
       { data: rulesRow, error: rulesError },
+      { data: awardsRow, error: awardsError },
     ] = await Promise.all([
       supabase
         .from('matches')
@@ -179,6 +194,7 @@ export function AdminPage() {
         .order('fifa_match_number', { ascending: true }),
       supabase.from('teams').select('id, short_name, name'),
       supabase.from('app_rules').select('version, sections, updated_at').eq('id', true).maybeSingle(),
+      supabase.from('official_awards').select('champion_team_id, best_player_name, top_scorer_player_name, top_assist_player_name').eq('id', true).maybeSingle(),
     ]);
 
     if (matchError) setMessage(`No pude cargar partidos: ${matchError.message}`);
@@ -209,6 +225,15 @@ export function AdminPage() {
       );
       setRulesVersion(normalizedRules.version);
       setRuleSections(normalizedRules.sections);
+    }
+
+    if (awardsError && !isMissingSpecialPredictionSchemaError(awardsError)) setMessage(`No pude cargar premios oficiales: ${awardsError.message}`);
+    else if (awardsRow) {
+      const awards = awardsRow as OfficialAwardsRow;
+      setAwardChampionTeamId(awards.champion_team_id ?? '');
+      setAwardBestPlayer(awards.best_player_name ?? '');
+      setAwardTopScorer(awards.top_scorer_player_name ?? '');
+      setAwardTopAssist(awards.top_assist_player_name ?? '');
     }
 
     setIsLoading(false);
@@ -307,6 +332,36 @@ export function AdminPage() {
     setRulesVersion(nextVersion);
     setRuleSections(cleanSections);
     setMessage('Reglas guardadas. Los usuarios tendrán que marcar la nueva versión como leída.');
+  };
+
+  const saveOfficialAwards = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!supabase) return;
+
+    if (!awardChampionTeamId || !awardBestPlayer.trim() || !awardTopScorer.trim() || !awardTopAssist.trim()) {
+      setMessage('Completa campeón, mejor jugador, máximo goleador y máximo asistente.');
+      return;
+    }
+
+    setIsAwardsSaving(true);
+    setMessage('');
+
+    const { error } = await supabase.rpc('admin_set_official_awards', {
+      p_champion_team_id: awardChampionTeamId,
+      p_best_player_name: awardBestPlayer.trim(),
+      p_top_scorer_player_name: awardTopScorer.trim(),
+      p_top_assist_player_name: awardTopAssist.trim(),
+    });
+
+    setIsAwardsSaving(false);
+
+    if (error) {
+      setMessage(`No se pudieron guardar los premios: ${error.message}`);
+      return;
+    }
+
+    setMessage('Premios oficiales guardados y puntos especiales recalculados.');
+    await loadAdminData({ preserveMessage: true });
   };
 
   if (accessStatus === 'checking') {
@@ -424,6 +479,49 @@ export function AdminPage() {
                 </div>
               ))}
           </section>
+
+          <form className="admin-form admin-form--wide" onSubmit={saveOfficialAwards}>
+            <h2>Premios oficiales</h2>
+            <p className="helper-text">Al guardar, se recalculan automáticamente los puntos de campeón, mejor jugador, máximo goleador y máximo asistente.</p>
+            <datalist id="admin-player-candidates">
+              {PLAYER_CANDIDATES.map((player) => (
+                <option key={player} value={player} />
+              ))}
+            </datalist>
+            <div className="form-row">
+              <label>
+                Campeón del Mundial
+                <select value={awardChampionTeamId} onChange={(event) => setAwardChampionTeamId(event.target.value)} required>
+                  <option value="">Selecciona campeón</option>
+                  {Object.values(teams)
+                    .sort((a, b) => a.name.localeCompare(b.name))
+                    .map((team) => (
+                      <option key={team.id} value={team.id}>
+                        {teamLabel(team.id)}
+                      </option>
+                    ))}
+                </select>
+              </label>
+              <label>
+                Mejor jugador
+                <input list="admin-player-candidates" value={awardBestPlayer} onChange={(event) => setAwardBestPlayer(event.target.value)} required />
+              </label>
+            </div>
+            <div className="form-row">
+              <label>
+                Máximo goleador
+                <input list="admin-player-candidates" value={awardTopScorer} onChange={(event) => setAwardTopScorer(event.target.value)} required />
+              </label>
+              <label>
+                Máximo asistente
+                <input list="admin-player-candidates" value={awardTopAssist} onChange={(event) => setAwardTopAssist(event.target.value)} required />
+              </label>
+            </div>
+            <button className="primary-button" type="submit" disabled={isAwardsSaving}>
+              <Save size={16} />
+              {isAwardsSaving ? 'Guardando...' : 'Guardar premios oficiales'}
+            </button>
+          </form>
 
           <form className="admin-form admin-form--wide" onSubmit={saveRules}>
             <h2>Editar reglas</h2>

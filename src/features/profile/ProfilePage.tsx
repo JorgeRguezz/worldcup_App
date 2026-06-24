@@ -1,8 +1,10 @@
 import { KeyRound, Mail, Save, Trophy, UserRound } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { teamName } from '../../data/demoTournament';
 import { isDisplayNameTakenError, normalizeDisplayName, validateDisplayName } from '../../lib/profile';
 import { isSupabaseConfigured, supabase } from '../../lib/supabase';
+import type { SpecialPredictionRow } from '../../lib/specialPredictions';
 
 type ProfileRow = {
   display_name: string;
@@ -20,6 +22,7 @@ export function ProfilePage() {
   const [displayName, setDisplayName] = useState('');
   const [nameDraft, setNameDraft] = useState('');
   const [ranking, setRanking] = useState<RankingRow | null>(null);
+  const [specialPrediction, setSpecialPrediction] = useState<SpecialPredictionRow | null>(null);
   const [newPassword, setNewPassword] = useState('');
   const [repeatPassword, setRepeatPassword] = useState('');
   const [isLoading, setIsLoading] = useState(isSupabaseConfigured);
@@ -50,9 +53,16 @@ export function ProfilePage() {
       setUserId(userResult.user.id);
       setEmail(userResult.user.email ?? '');
 
-      const [profileResult, rankingResult] = await Promise.all([
+      const [profileResult, rankingResult, specialPredictionResult] = await Promise.all([
         supabase!.from('profiles').select('display_name').eq('id', userResult.user.id).single(),
         supabase!.from('ranking').select('match_points, special_points, total_points').eq('user_id', userResult.user.id).maybeSingle(),
+        supabase!
+          .from('special_predictions')
+          .select(
+            'user_id, champion_team_id, best_player_name, top_scorer_player_name, top_assist_player_name, champion_points_awarded, best_player_points_awarded, top_scorer_points_awarded, top_assist_points_awarded, points_awarded, updated_at',
+          )
+          .eq('user_id', userResult.user.id)
+          .maybeSingle(),
       ]);
 
       if (!isMounted) return;
@@ -67,6 +77,10 @@ export function ProfilePage() {
 
       if (!rankingResult.error) {
         setRanking((rankingResult.data as RankingRow | null) ?? null);
+      }
+
+      if (!specialPredictionResult.error) {
+        setSpecialPrediction((specialPredictionResult.data as SpecialPredictionRow | null) ?? null);
       }
 
       setIsLoading(false);
@@ -191,6 +205,39 @@ export function ProfilePage() {
       </section>
 
       <div className="profile-grid">
+        <article className="profile-card profile-card--wide">
+          <div className="profile-card__heading">
+            <Trophy size={20} />
+            <div>
+              <h2>Predicción especial</h2>
+              <p>Campeón, mejor jugador, máximo goleador y máximo asistente.</p>
+            </div>
+          </div>
+          {specialPrediction ? (
+            <div className="special-selection-list special-selection-list--profile">
+              <span>
+                Campeón <b>{teamName(specialPrediction.champion_team_id)}</b>
+                <small>+{specialPrediction.champion_points_awarded} pts</small>
+              </span>
+              <span>
+                Mejor jugador <b>{specialPrediction.best_player_name}</b>
+                <small>+{specialPrediction.best_player_points_awarded} pts</small>
+              </span>
+              <span>
+                Máximo goleador <b>{specialPrediction.top_scorer_player_name}</b>
+                <small>+{specialPrediction.top_scorer_points_awarded} pts</small>
+              </span>
+              <span>
+                Máximo asistente <b>{specialPrediction.top_assist_player_name}</b>
+                <small>+{specialPrediction.top_assist_points_awarded} pts</small>
+              </span>
+              <strong>Total especial: +{specialPrediction.points_awarded} pts</strong>
+            </div>
+          ) : (
+            <p className="empty-state">Todavía no has guardado tu predicción especial.</p>
+          )}
+        </article>
+
         <form className="profile-card" onSubmit={saveDisplayName}>
           <div className="profile-card__heading">
             <UserRound size={20} />

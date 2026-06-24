@@ -5,8 +5,8 @@ export const KNOCKOUT_SCORE_RULES: Record<Exclude<Stage, 'GROUP'>, { exact: numb
   R16: { exact: 9, winner: 3 },
   QF: { exact: 12, winner: 4 },
   SF: { exact: 15, winner: 5 },
-  THIRD_PLACE: { exact: 15, winner: 5 },
-  FINAL: { exact: 30, winner: 10 },
+  THIRD_PLACE: { exact: 12, winner: 4 },
+  FINAL: { exact: 24, winner: 8 },
 };
 
 export function compareOutcome(home: number, away: number): 'HOME' | 'DRAW' | 'AWAY' {

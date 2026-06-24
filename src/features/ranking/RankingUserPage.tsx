@@ -6,6 +6,7 @@ import type { DecidedBy, GroupLetter, Match, MatchStatus, Stage } from '../../do
 import { formatMadridDateTime, formatScore } from '../../lib/format';
 import { formatRankingPosition } from '../../lib/ranking';
 import { isSupabaseConfigured, supabase } from '../../lib/supabase';
+import type { VisibleSpecialPredictionRow } from '../../lib/specialPredictions';
 
 const MADRID_TIME_ZONE = 'Europe/Madrid';
 const PREDICTION_DAY_START_HOUR = 7;
@@ -150,6 +151,7 @@ export function RankingUserPage() {
   const [rankingRows, setRankingRows] = useState<RankingRow[]>([]);
   const [matches, setMatches] = useState<Match[]>(isSupabaseConfigured ? [] : demoMatches);
   const [predictionLogs, setPredictionLogs] = useState<PredictionLogRow[]>([]);
+  const [visibleSpecialPredictions, setVisibleSpecialPredictions] = useState<VisibleSpecialPredictionRow[]>([]);
   const [showAllDays, setShowAllDays] = useState(false);
   const [isLoading, setIsLoading] = useState(isSupabaseConfigured);
   const [message, setMessage] = useState('');
@@ -163,7 +165,7 @@ export function RankingUserPage() {
       setIsLoading(true);
       setMessage('');
 
-      const [rankingResult, matchResult, predictionLogResult] = await Promise.all([
+      const [rankingResult, matchResult, predictionLogResult, visibleSpecialResult] = await Promise.all([
         supabase!
           .from('ranking')
           .select('user_id, display_name, match_points, special_points, total_points')
@@ -177,6 +179,7 @@ export function RankingUserPage() {
           .eq('status', 'FINAL')
           .order('kickoff_at', { ascending: false }),
         supabase!.rpc('visible_match_predictions'),
+        supabase!.rpc('visible_special_predictions'),
       ]);
 
       if (!isMounted) return;
@@ -191,6 +194,10 @@ export function RankingUserPage() {
         setPredictionLogs((predictionLogResult.data ?? []) as PredictionLogRow[]);
       }
 
+      if (!visibleSpecialResult.error) {
+        setVisibleSpecialPredictions((visibleSpecialResult.data ?? []) as VisibleSpecialPredictionRow[]);
+      }
+
       setIsLoading(false);
     }
 
@@ -203,6 +210,7 @@ export function RankingUserPage() {
 
   const rankedRows = useMemo(() => rankRows(rankingRows), [rankingRows]);
   const user = rankedRows.find((row) => row.user_id === userId) ?? null;
+  const userSpecialPrediction = visibleSpecialPredictions.find((prediction) => prediction.user_id === userId) ?? null;
   const userPredictionsByMatch = useMemo(
     () =>
       predictionLogs
@@ -312,6 +320,37 @@ export function RankingUserPage() {
             </article>
           </section>
 
+          {userSpecialPrediction ? (
+            <section className="profile-card profile-card--wide">
+              <div className="profile-card__heading">
+                <Crown size={20} />
+                <div>
+                  <h2>Predicción especial</h2>
+                  <p>Visible desde el cierre de la fase de grupos.</p>
+                </div>
+              </div>
+              <div className="special-selection-list special-selection-list--profile">
+                <span>
+                  Campeón <b>{teamName(userSpecialPrediction.champion_team_id)}</b>
+                  <small>+{userSpecialPrediction.champion_points_awarded} pts</small>
+                </span>
+                <span>
+                  Mejor jugador <b>{userSpecialPrediction.best_player_name}</b>
+                  <small>+{userSpecialPrediction.best_player_points_awarded} pts</small>
+                </span>
+                <span>
+                  Máximo goleador <b>{userSpecialPrediction.top_scorer_player_name}</b>
+                  <small>+{userSpecialPrediction.top_scorer_points_awarded} pts</small>
+                </span>
+                <span>
+                  Máximo asistente <b>{userSpecialPrediction.top_assist_player_name}</b>
+                  <small>+{userSpecialPrediction.top_assist_points_awarded} pts</small>
+                </span>
+                <strong>Total especial: +{userSpecialPrediction.points_awarded} pts</strong>
+              </div>
+            </section>
+          ) : null}
+
           <section className="ranking-history-section">
             <div className="section-heading">
               <h2>Historial de predicciones</h2>
@@ -340,7 +379,7 @@ export function RankingUserPage() {
                             <div className="ranking-history-card__prediction">
                               {item.state === 'exact' || item.state === 'scored' || item.state === 'missed' ? (
                                 <span className="prediction-result-indicator" aria-hidden="true">
-                                  {item.state === 'exact' ? '+3' : item.state === 'scored' ? '+1' : '×'}
+                                  {item.state === 'missed' ? '×' : `+${item.prediction?.points_awarded ?? 0}`}
                                 </span>
                               ) : null}
                               <strong>{copy.label}</strong>
