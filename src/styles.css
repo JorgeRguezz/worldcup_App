@@ -1798,11 +1798,22 @@ textarea:disabled {
 }
 
 .bracket-match__meta {
-  display: grid;
-  gap: 3px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
   color: #65746c;
   font-size: 0.82rem;
   line-height: 1.35;
+}
+
+.bracket-match__code {
+  border-radius: 999px;
+  background: #173d33;
+  padding: 4px 8px;
+  color: #ffffff;
+  font-size: 0.78rem;
+  font-weight: 900;
 }
 
 .bracket-match__teams {
@@ -1838,11 +1849,24 @@ textarea:disabled {
   min-width: 0;
 }
 
-.bracket-team__identity strong {
+.bracket-team__text {
+  display: grid;
+  gap: 2px;
   min-width: 0;
+}
+
+.bracket-team__identity strong {
   overflow-wrap: anywhere;
   color: #24352d;
   line-height: 1.2;
+}
+
+.bracket-team__identity small {
+  color: #607068;
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 
 .bracket-team__flag {
