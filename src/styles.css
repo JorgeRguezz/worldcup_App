@@ -1322,20 +1322,53 @@ a {
 
 .recent-prediction-result {
   position: relative;
-  display: inline-grid;
-  grid-template-columns: auto auto auto;
-  align-items: center;
-  gap: 8px;
-  min-height: 44px;
+  display: grid;
+  gap: 7px;
+  min-width: 190px;
+  min-height: 70px;
   border: 1px solid #dce2da;
   border-radius: 8px;
   background: #ffffff;
-  padding: 9px 36px 9px 12px;
+  padding: 10px 36px 10px 12px;
+}
+
+.recent-prediction-result__scoreline {
+  display: grid;
+  grid-template-columns: auto auto auto;
+  align-items: center;
+  justify-content: start;
+  gap: 8px;
 }
 
 .recent-prediction-result strong {
   color: #17231d;
   font-size: 0.95rem;
+  line-height: 1;
+}
+
+.recent-prediction-result__detail {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: #43534a;
+  font-size: 0.78rem;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.recent-prediction-result__detail b {
+  color: #17231d;
+  font-size: 0.86rem;
+}
+
+.recent-prediction-result__detail small {
+  border-radius: 999px;
+  background: #edf2ee;
+  color: #33433b;
+  padding: 4px 7px;
+  font-size: 0.68rem;
+  font-weight: 900;
   line-height: 1;
 }
 
@@ -1351,6 +1384,11 @@ a {
     0 0 18px rgb(27 143 90 / 28%);
 }
 
+.recent-prediction-result--outcome .recent-prediction-result__detail small {
+  background: #def3e8;
+  color: #13623f;
+}
+
 .recent-prediction-result--miss {
   border-color: #d44132;
   box-shadow:
@@ -1358,11 +1396,21 @@ a {
     0 0 18px rgb(212 65 50 / 28%);
 }
 
+.recent-prediction-result--miss .recent-prediction-result__detail small {
+  background: #fde6e2;
+  color: #9e2e25;
+}
+
 .recent-prediction-result--exact {
   border-color: #f4bd2a;
   box-shadow:
     0 0 0 1px rgb(244 189 42 / 84%),
     0 0 20px rgb(244 189 42 / 36%);
+}
+
+.recent-prediction-result--exact .recent-prediction-result__detail small {
+  background: #fff2c4;
+  color: #6f4b08;
 }
 
 .prediction-result-indicator {
@@ -2460,6 +2508,19 @@ label {
   .prediction-badge {
     min-width: 0;
     text-align: left;
+  }
+
+  .recent-prediction-results__grid {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .recent-prediction-result {
+    min-width: 0;
+  }
+
+  .recent-prediction-result__detail {
+    white-space: normal;
   }
 
   .special-selection-list,

@@ -22,6 +22,13 @@ function getRecentPredictionState(match: Match, prediction: CompactPrediction): 
   return prediction.points > 0 ? 'outcome' : 'miss';
 }
 
+function getRecentPredictionCopy(match: Match, state: RecentPredictionState): string {
+  if (state === 'exact') return 'Resultado exacto!';
+  if (state === 'outcome' && match.homeScore !== null && match.awayScore !== null && match.homeScore === match.awayScore) return 'Empate acertado';
+  if (state === 'outcome') return 'Ganador acertado';
+  return 'Perdida';
+}
+
 export function RecentPredictionResults({ matches, predictions }: RecentPredictionResultsProps) {
   const now = Date.now();
   const recentResults = matches
@@ -54,23 +61,33 @@ export function RecentPredictionResults({ matches, predictions }: RecentPredicti
             const homeFlag = flagForTeamId(match.homeTeamId);
             const awayFlag = flagForTeamId(match.awayTeamId);
             const score = `${match.homeScore}-${match.awayScore}`;
+            const predictedScore = `${prediction.home}-${prediction.away}`;
+            const stateCopy = getRecentPredictionCopy(match, state);
 
             return (
               <article
                 className={`recent-prediction-result recent-prediction-result--${state}`}
                 key={match.id}
-                aria-label={`${teamName(match.homeTeamId)} ${score} ${teamName(match.awayTeamId)}`}
+                aria-label={`${teamName(match.homeTeamId)} ${score} ${teamName(match.awayTeamId)}. Tu apuesta: ${predictedScore}. ${stateCopy}.`}
               >
                 <span className="prediction-result-indicator" aria-hidden="true">
                   {state === 'exact' ? '+3' : state === 'outcome' ? '+1' : '×'}
                 </span>
-                <span className="recent-prediction-result__flag" aria-hidden="true">
-                  {homeFlag}
-                </span>
-                <strong>{score}</strong>
-                <span className="recent-prediction-result__flag" aria-hidden="true">
-                  {awayFlag}
-                </span>
+                <div className="recent-prediction-result__scoreline">
+                  <span className="recent-prediction-result__flag" aria-hidden="true">
+                    {homeFlag}
+                  </span>
+                  <strong>{score}</strong>
+                  <span className="recent-prediction-result__flag" aria-hidden="true">
+                    {awayFlag}
+                  </span>
+                </div>
+                <div className="recent-prediction-result__detail">
+                  <span>
+                    Tu apuesta <b>{predictedScore}</b>
+                  </span>
+                  <small>{stateCopy}</small>
+                </div>
               </article>
             );
           })}
