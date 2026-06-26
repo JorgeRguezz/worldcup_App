@@ -2,7 +2,19 @@ import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { demoMatches, demoTeams } from '../../data/demoTournament';
 import { flagForTeamId } from '../../data/teamFlags';
-import type { DecidedBy, GroupLetter, Match, MatchStatus, Stage, Team, TeamId } from '../../domain/worldCupEngine';
+import {
+  GROUP_LETTERS,
+  rankGroup,
+  type DecidedBy,
+  type FinalGroupMatch,
+  type GroupLetter,
+  type Match,
+  type MatchStatus,
+  type RankedTeam,
+  type Stage,
+  type Team,
+  type TeamId,
+} from '../../domain/worldCupEngine';
 import { formatMadridDateTime } from '../../lib/format';
 import { isSupabaseConfigured, supabase } from '../../lib/supabase';
 
@@ -89,6 +101,33 @@ const roundOf32Sources: Record<number, { home: string; away: string }> = {
   87: { home: 'Ganador Grupo K', away: 'Mejor tercero asignado' },
   88: { home: 'Segundo Grupo D', away: 'Segundo Grupo G' },
 };
+
+const roundOf32GroupPositionSources: Array<{ matchNumber: number; side: MatchSide; groupLetter: GroupLetter; rank: 1 | 2 }> = [
+  { matchNumber: 73, side: 'home', groupLetter: 'A', rank: 2 },
+  { matchNumber: 73, side: 'away', groupLetter: 'B', rank: 2 },
+  { matchNumber: 74, side: 'home', groupLetter: 'E', rank: 1 },
+  { matchNumber: 75, side: 'home', groupLetter: 'F', rank: 1 },
+  { matchNumber: 75, side: 'away', groupLetter: 'C', rank: 2 },
+  { matchNumber: 76, side: 'home', groupLetter: 'C', rank: 1 },
+  { matchNumber: 76, side: 'away', groupLetter: 'F', rank: 2 },
+  { matchNumber: 77, side: 'home', groupLetter: 'I', rank: 1 },
+  { matchNumber: 78, side: 'home', groupLetter: 'E', rank: 2 },
+  { matchNumber: 78, side: 'away', groupLetter: 'I', rank: 2 },
+  { matchNumber: 79, side: 'home', groupLetter: 'A', rank: 1 },
+  { matchNumber: 80, side: 'home', groupLetter: 'L', rank: 1 },
+  { matchNumber: 81, side: 'home', groupLetter: 'D', rank: 1 },
+  { matchNumber: 82, side: 'home', groupLetter: 'G', rank: 1 },
+  { matchNumber: 83, side: 'home', groupLetter: 'K', rank: 2 },
+  { matchNumber: 83, side: 'away', groupLetter: 'L', rank: 2 },
+  { matchNumber: 84, side: 'home', groupLetter: 'H', rank: 1 },
+  { matchNumber: 84, side: 'away', groupLetter: 'J', rank: 2 },
+  { matchNumber: 85, side: 'home', groupLetter: 'B', rank: 1 },
+  { matchNumber: 86, side: 'home', groupLetter: 'J', rank: 1 },
+  { matchNumber: 86, side: 'away', groupLetter: 'H', rank: 2 },
+  { matchNumber: 87, side: 'home', groupLetter: 'K', rank: 1 },
+  { matchNumber: 88, side: 'home', groupLetter: 'D', rank: 2 },
+  { matchNumber: 88, side: 'away', groupLetter: 'G', rank: 2 },
+];
 
 const stageMatchNumbers: Record<DisplayStage, number[]> = {
   R32: [73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88],
@@ -180,6 +219,42 @@ function toMatch(row: MatchRow): Match {
   };
 }
 
+function isFinalGroupMatch(match: Match): match is FinalGroupMatch {
+  return (
+    match.stage === 'GROUP' &&
+    match.status === 'FINAL' &&
+    match.groupLetter !== null &&
+    match.homeTeamId !== null &&
+    match.awayTeamId !== null &&
+    match.homeScore !== null &&
+    match.awayScore !== null
+  );
+}
+
+function buildCompleteGroupTables(teams: Team[], matches: Match[]): Partial<Record<GroupLetter, RankedTeam[]>> {
+  const finalGroupMatches = matches.filter(isFinalGroupMatch);
+
+  return Object.fromEntries(
+    GROUP_LETTERS.map((groupLetter) => {
+      const groupTeams = teams.filter((team) => team.groupLetter === groupLetter);
+      const groupMatches = finalGroupMatches.filter((match) => match.groupLetter === groupLetter);
+      return [groupLetter, groupMatches.length === 6 ? rankGroup(groupTeams, groupMatches) : []];
+    }),
+  ) as Partial<Record<GroupLetter, RankedTeam[]>>;
+}
+
+function projectedRoundOf32Teams(matches: Match[], teams: Team[]): Map<string, TeamId> {
+  const tables = buildCompleteGroupTables(teams, matches);
+  const projected = new Map<string, TeamId>();
+
+  roundOf32GroupPositionSources.forEach((source) => {
+    const teamId = tables[source.groupLetter]?.[source.rank - 1]?.team.id;
+    if (teamId) projected.set(`${source.matchNumber}-${source.side}`, teamId);
+  });
+
+  return projected;
+}
+
 function placeholderMatch(stage: DisplayStage, index: number): BracketDisplayMatch {
   const fifaMatchNumber = stageMatchNumbers[stage][index];
   const sources = roundOf32Sources[fifaMatchNumber] ?? placeholderLabels[stage];
@@ -239,14 +314,25 @@ function sourceLabelForDependency(
   return dependency.sourceType === 'winner' ? `Ganador de ${source.displayCode}` : `Perdedor de ${source.displayCode}`;
 }
 
-function buildBracketMatches(matches: Match[]): BracketDisplayMatch[] {
+function buildBracketMatches(matches: Match[], teams: Team[]): BracketDisplayMatch[] {
   const placeholders = stages.flatMap((stage) => stageMatchNumbers[stage.id].map((_, index) => placeholderMatch(stage.id, index)));
   const realMatches = matches
     .filter((match) => stageMatchNumbers[match.stage as DisplayStage])
     .sort((a, b) => a.fifaMatchNumber - b.fifaMatchNumber)
     .map(toDisplayMatch);
   const realMatchesByNumber = new Map(realMatches.map((match) => [match.fifaMatchNumber, match]));
-  const merged = placeholders.map((placeholder) => realMatchesByNumber.get(placeholder.fifaMatchNumber) ?? placeholder);
+  const projectedTeams = projectedRoundOf32Teams(matches, teams);
+  const merged = placeholders.map((placeholder) => {
+    const match = realMatchesByNumber.get(placeholder.fifaMatchNumber) ?? placeholder;
+    const projectedHomeTeamId = match.homeTeamId ?? projectedTeams.get(`${match.fifaMatchNumber}-home`) ?? null;
+    const projectedAwayTeamId = match.awayTeamId ?? projectedTeams.get(`${match.fifaMatchNumber}-away`) ?? null;
+
+    return {
+      ...match,
+      homeTeamId: projectedHomeTeamId,
+      awayTeamId: projectedAwayTeamId,
+    };
+  });
   const mergedByNumber = new Map(merged.map((match) => [match.fifaMatchNumber, match]));
 
   return merged.map((match) => {
@@ -261,8 +347,8 @@ function buildBracketMatches(matches: Match[]): BracketDisplayMatch[] {
   });
 }
 
-function buildRoundMatches(stage: DisplayStage, matches: Match[]): BracketDisplayMatch[] {
-  return buildBracketMatches(matches)
+function buildRoundMatches(stage: DisplayStage, matches: Match[], teams: Team[]): BracketDisplayMatch[] {
+  return buildBracketMatches(matches, teams)
     .filter((match) => match.stage === stage)
     .sort((a, b) => a.fifaMatchNumber - b.fifaMatchNumber);
 }
@@ -339,7 +425,7 @@ export function BracketPage() {
   const [activeStageIndex, setActiveStageIndex] = useState(0);
   const activeStage: BracketStage = stages[activeStageIndex];
   const teamNames = useMemo(() => new Map(teams.map((team) => [team.id, team.name])), [teams]);
-  const activeMatches = useMemo(() => buildRoundMatches(activeStage.id, matches), [activeStage.id, matches]);
+  const activeMatches = useMemo(() => buildRoundMatches(activeStage.id, matches, teams), [activeStage.id, matches, teams]);
 
   useEffect(() => {
     if (!isSupabaseConfigured || !supabase) return;
@@ -361,7 +447,6 @@ export function BracketPage() {
           .select(
             'id, fifa_match_number, stage, group_letter, kickoff_at, venue, status, home_team_id, away_team_id, home_score, away_score, penalties_home, penalties_away, winner_team_id, decided_by',
           )
-          .neq('stage', 'GROUP')
           .order('fifa_match_number', { ascending: true }),
       ]);
 

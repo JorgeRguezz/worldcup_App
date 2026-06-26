@@ -59,6 +59,10 @@ type PredictionBucket = {
   matches: Match[];
 };
 
+type PastPredictionBucket = PredictionBucket & {
+  id: string;
+};
+
 type PredictionUpsertRow = {
   user_id: string;
   match_id: string;
@@ -142,6 +146,62 @@ function isLocked(match: Match): boolean {
 
 function isCompleteDraft(draft: DraftPrediction | undefined): draft is DraftPrediction {
   return Boolean(draft && draft.home !== '' && draft.away !== '');
+}
+
+function sortByKickoffThenNumber(a: Match, b: Match): number {
+  const kickoffDiff = new Date(a.kickoffAt).getTime() - new Date(b.kickoffAt).getTime();
+  if (kickoffDiff !== 0) return kickoffDiff;
+  return a.fifaMatchNumber - b.fifaMatchNumber;
+}
+
+function sortByRecentKickoff(a: Match, b: Match): number {
+  const kickoffDiff = new Date(b.kickoffAt).getTime() - new Date(a.kickoffAt).getTime();
+  if (kickoffDiff !== 0) return kickoffDiff;
+  return b.fifaMatchNumber - a.fifaMatchNumber;
+}
+
+function getStageTitle(stage: Stage): string {
+  if (stage === 'GROUP') return 'Fase de grupos';
+  if (stage === 'R32') return 'Dieciseisavos';
+  if (stage === 'R16') return 'Octavos';
+  if (stage === 'QF') return 'Cuartos';
+  if (stage === 'SF') return 'Semifinales';
+  if (stage === 'THIRD_PLACE') return 'Tercer puesto';
+  return 'Final';
+}
+
+function getGroupMatchday(match: Match, allMatches: Match[]): number {
+  if (match.stage !== 'GROUP' || !match.groupLetter) return 0;
+
+  const groupMatches = allMatches
+    .filter((item) => item.stage === 'GROUP' && item.groupLetter === match.groupLetter)
+    .sort(sortByKickoffThenNumber);
+  const matchIndex = groupMatches.findIndex((item) => item.id === match.id);
+  if (matchIndex < 0) return 0;
+
+  return Math.floor(matchIndex / 2) + 1;
+}
+
+function buildPastPredictionBuckets(pastMatches: Match[], allMatches: Match[]): PastPredictionBucket[] {
+  const buckets = new Map<string, PastPredictionBucket>();
+
+  pastMatches.forEach((match) => {
+    const groupMatchday = getGroupMatchday(match, allMatches);
+    const id = groupMatchday > 0 ? `group-${groupMatchday}` : `stage-${match.stage}`;
+    const title = groupMatchday > 0 ? `Fase de grupos · Jornada ${groupMatchday}` : getStageTitle(match.stage);
+    const bucket = buckets.get(id) ?? { id, title, matches: [] };
+
+    bucket.matches.push(match);
+    buckets.set(id, bucket);
+  });
+
+  return [...buckets.values()]
+    .map((bucket) => ({ ...bucket, matches: bucket.matches.sort(sortByRecentKickoff) }))
+    .sort((a, b) => {
+      const latestA = Math.max(...a.matches.map((match) => new Date(match.kickoffAt).getTime()));
+      const latestB = Math.max(...b.matches.map((match) => new Date(match.kickoffAt).getTime()));
+      return latestB - latestA;
+    });
 }
 
 export function PredictionsPage() {
@@ -265,32 +325,30 @@ export function PredictionsPage() {
 
   const orderedMatches = useMemo(() => {
     const now = Date.now();
-    const byKickoffAsc = (a: Match, b: Match) => new Date(a.kickoffAt).getTime() - new Date(b.kickoffAt).getTime();
-    const byKickoffDesc = (a: Match, b: Match) => new Date(b.kickoffAt).getTime() - new Date(a.kickoffAt).getTime();
 
     return {
       available: matches
         .filter((match) => match.homeTeamId && match.awayTeamId && new Date(match.kickoffAt).getTime() > now)
-        .sort(byKickoffAsc),
+        .sort(sortByKickoffThenNumber),
       past: matches
-        .filter((match) => !match.homeTeamId || !match.awayTeamId || new Date(match.kickoffAt).getTime() <= now)
-        .sort(byKickoffDesc),
+        .filter((match) => new Date(match.kickoffAt).getTime() <= now)
+        .sort(sortByRecentKickoff),
     };
   }, [matches]);
 
   const availableBuckets = useMemo<PredictionBucket[]>(() => {
     const todayKey = getPredictionDayKey(new Date());
-    const tomorrowKey = addDaysToDayKey(todayKey, 1);
-
     const today = orderedMatches.available.filter((match) => getPredictionDayKey(match.kickoffAt) === todayKey);
-    const tomorrow = orderedMatches.available.filter((match) => getPredictionDayKey(match.kickoffAt) === tomorrowKey);
 
     return [
       { title: 'Hoy', matches: today },
-      { title: 'Mañana', matches: tomorrow },
     ].filter((bucket) => bucket.matches.length > 0);
   }, [orderedMatches.available]);
   const availablePredictionMatches = useMemo(() => availableBuckets.flatMap((bucket) => bucket.matches), [availableBuckets]);
+  const pastPredictionBuckets = useMemo(
+    () => buildPastPredictionBuckets(orderedMatches.past, matches),
+    [matches, orderedMatches.past],
+  );
   const teamOptions = useMemo(() => {
     const teamIds = new Set<string>();
     matches
@@ -755,8 +813,23 @@ export function PredictionsPage() {
           <h2>Pasadas</h2>
           <span>{orderedMatches.past.length}</span>
         </div>
-        {orderedMatches.past.length > 0 ? (
-          <div className="prediction-grid">{orderedMatches.past.map((match) => renderPredictionEditor(match, true))}</div>
+        {pastPredictionBuckets.length > 0 ? (
+          <div className="past-prediction-groups">
+            {pastPredictionBuckets.map((bucket) => (
+              <details className="past-prediction-group" key={bucket.id}>
+                <summary>
+                  <span>
+                    <strong>{bucket.title}</strong>
+                    <small>{bucket.matches.length} partidos</small>
+                  </span>
+                  <b>Ver</b>
+                </summary>
+                <div className="prediction-grid past-prediction-group__grid">
+                  {bucket.matches.map((match) => renderPredictionEditor(match, true))}
+                </div>
+              </details>
+            ))}
+          </div>
         ) : (
           <p className="empty-state">Todavía no hay predicciones pasadas.</p>
         )}
