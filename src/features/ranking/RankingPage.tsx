@@ -140,7 +140,7 @@ export function RankingPage() {
       const [rankingResult, matchResult, predictionLogResult, predictionCountResult] = await Promise.all([
         supabase!
           .from('ranking')
-          .select('user_id, display_name, match_points, special_points, superquota_points, total_points')
+          .select('user_id, display_name, match_points, special_points, total_points')
           .order('total_points', { ascending: false })
           .order('display_name', { ascending: true }),
         supabase!

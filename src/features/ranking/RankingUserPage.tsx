@@ -4,7 +4,7 @@ import { Link, useParams } from 'react-router-dom';
 import { demoMatches, teamName } from '../../data/demoTournament';
 import type { DecidedBy, GroupLetter, Match, MatchStatus, Stage } from '../../domain/worldCupEngine';
 import { formatMadridDateTime, formatScore } from '../../lib/format';
-import { formatRankingPosition } from '../../lib/ranking';
+import { formatRankingPosition, isMissingSuperquotaRankingColumn } from '../../lib/ranking';
 import { isSupabaseConfigured, supabase } from '../../lib/supabase';
 import type { VisibleSpecialPredictionRow } from '../../lib/specialPredictions';
 
@@ -185,8 +185,22 @@ export function RankingUserPage() {
 
       if (!isMounted) return;
 
-      if (rankingResult.error) setMessage(`No pude cargar el usuario: ${rankingResult.error.message}`);
-      else setRankingRows((rankingResult.data ?? []) as RankingRow[]);
+      let rankingData = rankingResult.data;
+      let rankingError = rankingResult.error;
+      if (isMissingSuperquotaRankingColumn(rankingError)) {
+        const fallbackResult = await supabase!
+          .from('ranking')
+          .select('user_id, display_name, match_points, special_points, total_points')
+          .order('total_points', { ascending: false })
+          .order('display_name', { ascending: true });
+        rankingData = (fallbackResult.data ?? []).map((row) => ({ ...row, superquota_points: 0 }));
+        rankingError = fallbackResult.error;
+      }
+
+      if (!isMounted) return;
+
+      if (rankingError) setMessage(`No pude cargar el usuario: ${rankingError.message}`);
+      else setRankingRows((rankingData ?? []) as RankingRow[]);
 
       if (matchResult.error) setMessage(`No pude cargar los partidos: ${matchResult.error.message}`);
       else setMatches(((matchResult.data ?? []) as MatchRow[]).map(toMatch));

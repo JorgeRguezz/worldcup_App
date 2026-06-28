@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { teamName } from '../../data/demoTournament';
 import { isDisplayNameTakenError, normalizeDisplayName, validateDisplayName } from '../../lib/profile';
+import { isMissingSuperquotaRankingColumn } from '../../lib/ranking';
 import { isSupabaseConfigured, supabase } from '../../lib/supabase';
 import type { SpecialPredictionRow } from '../../lib/specialPredictions';
 
@@ -72,6 +73,20 @@ export function ProfilePage() {
 
       if (!isMounted) return;
 
+      let rankingData = rankingResult.data;
+      let rankingError = rankingResult.error;
+      if (isMissingSuperquotaRankingColumn(rankingError)) {
+        const fallbackResult = await supabase!
+          .from('ranking')
+          .select('match_points, special_points, total_points')
+          .eq('user_id', userResult.user.id)
+          .maybeSingle();
+        rankingData = fallbackResult.data ? { ...fallbackResult.data, superquota_points: 0 } : null;
+        rankingError = fallbackResult.error;
+      }
+
+      if (!isMounted) return;
+
       if (profileResult.error) {
         setPageMessage(`No pude cargar tu perfil: ${profileResult.error.message}`);
       } else {
@@ -80,8 +95,8 @@ export function ProfilePage() {
         setNameDraft(profile.display_name);
       }
 
-      if (!rankingResult.error) {
-        setRanking((rankingResult.data as RankingRow | null) ?? null);
+      if (!rankingError) {
+        setRanking((rankingData as RankingRow | null) ?? null);
       }
 
       if (!specialPredictionResult.error) {

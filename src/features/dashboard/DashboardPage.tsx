@@ -273,7 +273,7 @@ export function DashboardPage() {
           .order('kickoff_at', { ascending: true }),
         supabase!
           .from('ranking')
-          .select('user_id, display_name, match_points, special_points, superquota_points, total_points')
+          .select('user_id, display_name, match_points, special_points, total_points')
           .order('total_points', { ascending: false })
           .order('display_name', { ascending: true }),
         currentUserId
