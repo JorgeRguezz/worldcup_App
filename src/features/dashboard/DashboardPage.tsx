@@ -15,6 +15,7 @@ import {
   type SpecialPredictionRow,
   type VisibleSpecialPredictionRow,
 } from '../../lib/specialPredictions';
+import { SuperquotaPredictionPanel } from '../superquota/SuperquotaPredictionPanel';
 
 const MADRID_TIME_ZONE = 'Europe/Madrid';
 const PREDICTION_DAY_START_HOUR = 7;
@@ -54,6 +55,7 @@ type RankingRow = {
   display_name: string;
   match_points: number;
   special_points: number;
+  superquota_points: number;
   total_points: number;
 };
 
@@ -76,6 +78,26 @@ type PredictionState = 'exact' | 'outcome' | 'miss' | 'none' | 'pending';
 type VisiblePredictionMatchGroup = {
   match: Match;
   predictions: VisiblePredictionRow[];
+};
+
+type VisibleSuperquotaPredictionRow = {
+  match_id: string;
+  market_id: string;
+  market_title: string;
+  user_id: string;
+  display_name: string;
+  option_id: string;
+  option_label: string;
+  points_awarded: number;
+  is_void: boolean;
+  updated_at: string;
+};
+
+type VisibleSuperquotaGroup = {
+  match: Match;
+  marketId: string;
+  title: string;
+  predictions: VisibleSuperquotaPredictionRow[];
 };
 
 function toMatch(row: MatchRow): Match {
@@ -192,13 +214,16 @@ export function DashboardPage() {
   const [visiblePredictions, setVisiblePredictions] = useState<Record<string, VisiblePredictionRow[]>>({});
   const [specialPrediction, setSpecialPrediction] = useState<SpecialPredictionRow | null>(null);
   const [visibleSpecialPredictions, setVisibleSpecialPredictions] = useState<VisibleSpecialPredictionRow[]>([]);
+  const [visibleSuperquotaPredictions, setVisibleSuperquotaPredictions] = useState<VisibleSuperquotaPredictionRow[]>([]);
   const [dailyDeltas, setDailyDeltas] = useState<DailyDeltaRow[]>([]);
+  const [superquotaPointsToday, setSuperquotaPointsToday] = useState(0);
   const [isDailyDeltaReady, setIsDailyDeltaReady] = useState(!isSupabaseConfigured);
   const [rankingRows, setRankingRows] = useState<RankingRow[]>(
     demoRanking.map((row) => ({
       display_name: row.name,
       match_points: row.matchPoints,
       special_points: row.specialPoints,
+      superquota_points: 0,
       total_points: row.totalPoints,
     })),
   );
@@ -229,7 +254,17 @@ export function DashboardPage() {
       setUserId(currentUserId);
       const yesterdayKey = addDaysToDayKey(getPredictionDayKey(new Date()), -1);
 
-      const [matchResult, rankingResult, predictionResult, deltaResult, visiblePredictionResult, specialPredictionResult, visibleSpecialResult] = await Promise.all([
+      const [
+        matchResult,
+        rankingResult,
+        predictionResult,
+        deltaResult,
+        visiblePredictionResult,
+        specialPredictionResult,
+        visibleSpecialResult,
+        visibleSuperquotaResult,
+        superquotaPointsTodayResult,
+      ] = await Promise.all([
         supabase!
           .from('matches')
           .select(
@@ -238,7 +273,7 @@ export function DashboardPage() {
           .order('kickoff_at', { ascending: true }),
         supabase!
           .from('ranking')
-          .select('user_id, display_name, match_points, special_points, total_points')
+          .select('user_id, display_name, match_points, special_points, superquota_points, total_points')
           .order('total_points', { ascending: false })
           .order('display_name', { ascending: true }),
         currentUserId
@@ -259,6 +294,10 @@ export function DashboardPage() {
               .maybeSingle()
           : Promise.resolve({ data: null, error: null }),
         supabase!.rpc('visible_special_predictions'),
+        supabase!.rpc('visible_superquota_predictions'),
+        currentUserId
+          ? supabase!.rpc('user_superquota_points_on_day', { p_day: getPredictionDayKey(new Date()) })
+          : Promise.resolve({ data: 0, error: null }),
       ]);
 
       if (!isMounted) return;
@@ -300,6 +339,14 @@ export function DashboardPage() {
 
       if (!visibleSpecialResult.error) {
         setVisibleSpecialPredictions((visibleSpecialResult.data ?? []) as VisibleSpecialPredictionRow[]);
+      }
+
+      if (!visibleSuperquotaResult.error) {
+        setVisibleSuperquotaPredictions((visibleSuperquotaResult.data ?? []) as VisibleSuperquotaPredictionRow[]);
+      }
+
+      if (!superquotaPointsTodayResult.error) {
+        setSuperquotaPointsToday(Number(superquotaPointsTodayResult.data ?? 0));
       }
 
       setIsLoading(false);
@@ -348,7 +395,7 @@ export function DashboardPage() {
     const match = matches.find((item) => item.id === prediction.match_id);
     if (!match || match.status !== 'FINAL' || getPredictionDayKey(match.kickoffAt) !== currentPredictionDayKey) return total;
     return total + prediction.points_awarded;
-  }, 0);
+  }, superquotaPointsToday);
   const rankDelta = currentUserDelta?.position_delta ?? 0;
   const rankDeltaCopy = !currentUserRank
     ? { label: '-', tone: 'neutral', Icon: Minus }
@@ -378,7 +425,36 @@ export function DashboardPage() {
         .slice(0, 6),
     [matches, userId, visiblePredictions],
   );
-  const visiblePublicPredictionGroupCount = visiblePredictionGroups.length + (publicSpecialPredictions.length > 0 ? 1 : 0);
+  const visibleSuperquotaGroups = useMemo<VisibleSuperquotaGroup[]>(() => {
+    const grouped = new Map<string, VisibleSuperquotaGroup>();
+
+    visibleSuperquotaPredictions
+      .filter((prediction) => !userId || prediction.user_id !== userId)
+      .forEach((prediction) => {
+        const match = matches.find((candidate) => candidate.id === prediction.match_id);
+        if (!match) return;
+        const current = grouped.get(prediction.market_id);
+        if (current) {
+          current.predictions.push(prediction);
+        } else {
+          grouped.set(prediction.market_id, {
+            match,
+            marketId: prediction.market_id,
+            title: prediction.market_title,
+            predictions: [prediction],
+          });
+        }
+      });
+
+    return [...grouped.values()]
+      .map((group) => ({
+        ...group,
+        predictions: group.predictions.sort((a, b) => a.display_name.localeCompare(b.display_name)),
+      }))
+      .sort((a, b) => new Date(a.match.kickoffAt).getTime() - new Date(b.match.kickoffAt).getTime());
+  }, [matches, userId, visibleSuperquotaPredictions]);
+  const visiblePublicPredictionGroupCount =
+    visiblePredictionGroups.length + visibleSuperquotaGroups.length + (publicSpecialPredictions.length > 0 ? 1 : 0);
   const updatePublicSliderState = useCallback(() => {
     const slider = publicPredictionsRef.current;
     if (!slider) {
@@ -453,6 +529,8 @@ export function DashboardPage() {
 
       {message ? <p className="form-message">{message}</p> : null}
       {isLoading ? <p className="empty-state">Cargando resumen...</p> : null}
+
+      {userId ? <SuperquotaPredictionPanel matches={matches} now={now} userId={userId} variant="spotlight" /> : null}
 
       <div className="metric-grid">
         <article className="metric">
@@ -564,8 +642,30 @@ export function DashboardPage() {
             <span>{visiblePublicPredictionGroupCount}</span>
           </div>
           <div className="table-card rank-predictions">
-            {visiblePredictionGroups.length > 0 || publicSpecialPredictions.length > 0 ? (
+            {visiblePredictionGroups.length > 0 || visibleSuperquotaGroups.length > 0 || publicSpecialPredictions.length > 0 ? (
               <>
+                {visibleSuperquotaGroups.map((group) => (
+                  <article className="public-prediction-match public-prediction-match--superquota" key={`superquota-${group.marketId}`}>
+                    <div className="public-prediction-match__header">
+                      <div>
+                        <span>Supercuota · {teamName(group.match.homeTeamId)} vs {teamName(group.match.awayTeamId)}</span>
+                        <h4>{group.title}</h4>
+                      </div>
+                      <span className="match-card__state match-card__state--locked">
+                        <span className="match-card__state-dot" />
+                        Cerrada
+                      </span>
+                    </div>
+                    <div className="public-prediction-match__rows">
+                      {group.predictions.map((prediction) => (
+                        <div className="public-prediction-row" key={`${prediction.market_id}-${prediction.user_id}`}>
+                          <strong>{prediction.display_name}</strong>
+                          <b>{prediction.option_label}</b>
+                        </div>
+                      ))}
+                    </div>
+                  </article>
+                ))}
                 {publicSpecialPredictions.length > 0 ? (
                   <article className="public-prediction-match public-prediction-match--special">
                     <div className="public-prediction-match__header">

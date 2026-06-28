@@ -8,6 +8,7 @@ import { DEFAULT_RULE_SECTIONS, normalizeRulesContent, type RuleSection } from '
 import { formatMadridDateTime, formatScore } from '../../lib/format';
 import { isSupabaseConfigured, supabase } from '../../lib/supabase';
 import { isMissingSpecialPredictionSchemaError } from '../../lib/specialPredictions';
+import { SuperquotaAdminPanel } from '../superquota/SuperquotaAdminPanel';
 
 type MatchRow = {
   id: string;
@@ -394,6 +395,8 @@ export function AdminPage() {
 
       {!isLoading && !isAdmin ? null : (
         <section className="admin-grid">
+          <SuperquotaAdminPanel matches={matches} teams={teams} />
+
           <form className="admin-form" onSubmit={submitResult}>
             <h2>Cargar resultado</h2>
             <label>

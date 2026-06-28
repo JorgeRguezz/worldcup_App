@@ -16,6 +16,7 @@ type RankingRow = {
   display_name: string;
   match_points: number;
   special_points: number;
+  superquota_points: number;
   total_points: number;
 };
 
@@ -168,7 +169,7 @@ export function RankingUserPage() {
       const [rankingResult, matchResult, predictionLogResult, visibleSpecialResult] = await Promise.all([
         supabase!
           .from('ranking')
-          .select('user_id, display_name, match_points, special_points, total_points')
+          .select('user_id, display_name, match_points, special_points, superquota_points, total_points')
           .order('total_points', { ascending: false })
           .order('display_name', { ascending: true }),
         supabase!
@@ -294,6 +295,10 @@ export function RankingUserPage() {
             <article className="metric">
               <span>Especiales</span>
               <strong>{user.special_points}</strong>
+            </article>
+            <article className="metric metric--superquota">
+              <span>Supercuotas</span>
+              <strong>{user.superquota_points}</strong>
             </article>
           </section>
 

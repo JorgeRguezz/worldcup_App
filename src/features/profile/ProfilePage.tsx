@@ -13,6 +13,7 @@ type ProfileRow = {
 type RankingRow = {
   match_points: number;
   special_points: number;
+  superquota_points: number;
   total_points: number;
 };
 
@@ -55,7 +56,11 @@ export function ProfilePage() {
 
       const [profileResult, rankingResult, specialPredictionResult] = await Promise.all([
         supabase!.from('profiles').select('display_name').eq('id', userResult.user.id).single(),
-        supabase!.from('ranking').select('match_points, special_points, total_points').eq('user_id', userResult.user.id).maybeSingle(),
+        supabase!
+          .from('ranking')
+          .select('match_points, special_points, superquota_points, total_points')
+          .eq('user_id', userResult.user.id)
+          .maybeSingle(),
         supabase!
           .from('special_predictions')
           .select(
@@ -205,6 +210,20 @@ export function ProfilePage() {
       </section>
 
       <div className="profile-grid">
+        <article className="profile-card profile-card--wide">
+          <div className="profile-card__heading">
+            <Trophy size={20} />
+            <div>
+              <h2>Desglose de puntos</h2>
+            </div>
+          </div>
+          <div className="profile-points-breakdown">
+            <span>Partidos <strong>{ranking?.match_points ?? 0}</strong></span>
+            <span>Predicción especial <strong>{ranking?.special_points ?? 0}</strong></span>
+            <span>Supercuotas <strong>{ranking?.superquota_points ?? 0}</strong></span>
+          </div>
+        </article>
+
         <article className="profile-card profile-card--wide">
           <div className="profile-card__heading">
             <Trophy size={20} />

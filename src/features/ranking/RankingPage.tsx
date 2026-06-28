@@ -10,6 +10,7 @@ type RankingRow = {
   display_name: string;
   match_points: number;
   special_points: number;
+  superquota_points: number;
   total_points: number;
 };
 
@@ -117,6 +118,7 @@ export function RankingPage() {
       display_name: row.name,
       match_points: row.matchPoints,
       special_points: row.specialPoints,
+      superquota_points: 0,
       total_points: row.totalPoints,
     })),
   );
@@ -138,7 +140,7 @@ export function RankingPage() {
       const [rankingResult, matchResult, predictionLogResult, predictionCountResult] = await Promise.all([
         supabase!
           .from('ranking')
-          .select('user_id, display_name, match_points, special_points, total_points')
+          .select('user_id, display_name, match_points, special_points, superquota_points, total_points')
           .order('total_points', { ascending: false })
           .order('display_name', { ascending: true }),
         supabase!

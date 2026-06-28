@@ -20,6 +20,7 @@ import {
   SPECIAL_PREDICTION_TOTAL_POINTS,
   type SpecialPredictionRow,
 } from '../../lib/specialPredictions';
+import { SuperquotaPredictionPanel } from '../superquota/SuperquotaPredictionPanel';
 
 type MatchRow = {
   id: string;
@@ -764,6 +765,8 @@ export function PredictionsPage() {
 
       {message ? <p className="form-message">{message}</p> : null}
       {isLoading ? <p className="empty-state">Cargando partidos y predicciones...</p> : null}
+
+      {userId ? <SuperquotaPredictionPanel matches={matches} now={now} userId={userId} /> : null}
 
       {selectedTeamId ? (
         <div ref={teamProfileRef}>
