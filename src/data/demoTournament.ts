@@ -1,4 +1,4 @@
-import { rankAllThirdPlaces, rankGroup, GROUP_LETTERS, type FinalGroupMatch, type GroupLetter, type Match, type RankedTeam, type RankedThirdPlace, type Team } from '../domain/worldCupEngine';
+import { KNOCKOUT_SCHEDULE, rankAllThirdPlaces, rankGroup, GROUP_LETTERS, type FinalGroupMatch, type GroupLetter, type Match, type RankedTeam, type RankedThirdPlace, type Team } from '../domain/worldCupEngine';
 import { withFlag } from './teamFlags';
 
 type TeamSeed = {
@@ -184,40 +184,18 @@ export const demoMatches: Match[] = [
       decidedBy: match.score ? 'NORMAL_TIME' : null,
     } satisfies Match;
   }),
-  {
-    id: 'm73',
-    fifaMatchNumber: 73,
-    stage: 'R32',
+  ...KNOCKOUT_SCHEDULE.map((match) => ({
+    id: `m${match.fifaMatchNumber}`,
+    ...match,
     groupLetter: null,
-    kickoffAt: '2026-06-28T19:00:00.000Z',
-    venue: 'Los Angeles',
-    status: 'SCHEDULED',
-    homeTeamId: null,
-    awayTeamId: null,
+    status: 'SCHEDULED' as const,
     homeScore: null,
     awayScore: null,
     penaltiesHome: null,
     penaltiesAway: null,
     winnerTeamId: null,
     decidedBy: null,
-  },
-  {
-    id: 'm104',
-    fifaMatchNumber: 104,
-    stage: 'FINAL',
-    groupLetter: null,
-    kickoffAt: '2026-07-19T19:00:00.000Z',
-    venue: 'New York/New Jersey',
-    status: 'SCHEDULED',
-    homeTeamId: null,
-    awayTeamId: null,
-    homeScore: null,
-    awayScore: null,
-    penaltiesHome: null,
-    penaltiesAway: null,
-    winnerTeamId: null,
-    decidedBy: null,
-  },
+  } satisfies Match)),
 ];
 
 export const demoPredictions: Array<{ matchId: string; home: number; away: number; points: number }> = [];
