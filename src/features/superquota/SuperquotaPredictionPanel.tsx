@@ -6,6 +6,12 @@ import type { Match } from '../../domain/worldCupEngine';
 import { formatMadridDateTime } from '../../lib/format';
 import { formatCountdown } from '../../lib/specialPredictions';
 import { supabase } from '../../lib/supabase';
+import {
+  effectiveSuperquotaPoints,
+  getOpenSuperquotaMarkets,
+  getResolvedSuperquotaMarkets,
+  isMissingSuperquotaSchemaError,
+} from './superquotaState';
 import type { SuperquotaMarketStatus, SuperquotaMarketType } from './types';
 
 type SuperquotaMarketRow = {
@@ -39,16 +45,6 @@ type SuperquotaPredictionPanelProps = {
   userId: string;
   variant?: 'full' | 'spotlight';
 };
-
-function isMissingSuperquotaSchemaError(error: { code?: string; message?: string } | null): boolean {
-  return Boolean(
-    error &&
-      (error.code === 'PGRST205' ||
-        error.code === 'PGRST202' ||
-        error.message?.includes('superquota_') ||
-        error.message?.includes('save_superquota_prediction')),
-  );
-}
 
 function matchLabel(match: Match | undefined): string {
   if (!match) return 'Partido especial';
@@ -120,29 +116,11 @@ export function SuperquotaPredictionPanel({ matches, now, userId, variant = 'ful
   }, [userId]);
 
   const openMarkets = useMemo(
-    () =>
-      markets
-        .filter((market) => {
-          const match = matches.find((candidate) => candidate.id === market.match_id);
-          return match && new Date(match.kickoffAt).getTime() > now;
-        })
-        .sort((a, b) => {
-          const matchA = matches.find((match) => match.id === a.match_id);
-          const matchB = matches.find((match) => match.id === b.match_id);
-          return new Date(matchA?.kickoffAt ?? 0).getTime() - new Date(matchB?.kickoffAt ?? 0).getTime();
-        }),
+    () => getOpenSuperquotaMarkets(markets, matches, now),
     [markets, matches, now],
   );
   const resolvedMarkets = useMemo(
-    () =>
-      markets
-        .filter((market) => market.status === 'RESOLVED' && Boolean(predictionsByMarket[market.id]))
-        .sort((a, b) => {
-          const matchA = matches.find((match) => match.id === a.match_id);
-          const matchB = matches.find((match) => match.id === b.match_id);
-          return new Date(matchB?.kickoffAt ?? 0).getTime() - new Date(matchA?.kickoffAt ?? 0).getTime();
-        })
-        .slice(0, 6),
+    () => getResolvedSuperquotaMarkets(markets, matches, new Set(Object.keys(predictionsByMarket))),
     [markets, matches, predictionsByMarket],
   );
 
@@ -173,7 +151,10 @@ export function SuperquotaPredictionPanel({ matches, now, userId, variant = 'ful
   };
 
   const displayedResolvedMarkets = variant === 'full' ? resolvedMarkets : [];
-  if (!schemaAvailable || (openMarkets.length === 0 && displayedResolvedMarkets.length === 0)) return null;
+  if (!schemaAvailable) return null;
+  if (openMarkets.length === 0 && displayedResolvedMarkets.length === 0) {
+    return message ? <p className="superquota-load-error" role="alert">{message}</p> : null;
+  }
 
   const displayedMarkets = variant === 'spotlight' ? openMarkets.slice(0, 1) : openMarkets;
   const remainingMarketCount = openMarkets.length - displayedMarkets.length;
@@ -196,7 +177,7 @@ export function SuperquotaPredictionPanel({ matches, now, userId, variant = 'ful
         </div>
       </div>
 
-      {message ? <p className="superquota-predictions__message">{message}</p> : null}
+      {message ? <p className="superquota-predictions__message" role="status" aria-live="polite">{message}</p> : null}
 
       <div className="superquota-predictions__grid">
         {displayedMarkets.map((market) => {
@@ -231,7 +212,7 @@ export function SuperquotaPredictionPanel({ matches, now, userId, variant = 'ful
                       disabled={isSaving}
                     >
                       <span>{isSelected ? <Check size={16} /> : null}{option.label}</span>
-                      <strong>+{option.points ?? market.default_points}</strong>
+                      <strong>+{effectiveSuperquotaPoints(option.points, market.default_points)}</strong>
                     </button>
                   );
                 })}

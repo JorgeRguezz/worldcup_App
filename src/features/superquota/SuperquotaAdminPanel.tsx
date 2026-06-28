@@ -4,6 +4,7 @@ import { StatusPill } from '../../components/StatusPill';
 import type { Match } from '../../domain/worldCupEngine';
 import { formatMadridDateTime } from '../../lib/format';
 import { supabase } from '../../lib/supabase';
+import { effectiveSuperquotaPoints, isMissingSuperquotaSchemaError } from './superquotaState';
 import type { SuperquotaMarketStatus, SuperquotaMarketType } from './types';
 
 type TeamSummary = {
@@ -99,15 +100,6 @@ function matchTitle(match: Match | undefined, teams: Record<string, TeamSummary>
   const home = match.homeTeamId ? teams[match.homeTeamId]?.short_name ?? match.homeTeamId : 'TBD';
   const away = match.awayTeamId ? teams[match.awayTeamId]?.short_name ?? match.awayTeamId : 'TBD';
   return `${home} vs ${away}`;
-}
-
-function isMissingSuperquotaSchemaError(error: { code?: string; message?: string } | null): boolean {
-  return Boolean(
-    error &&
-      (error.code === 'PGRST205' ||
-        error.message?.includes('superquota_') ||
-        error.message?.includes('admin_save_superquota')),
-  );
 }
 
 export function SuperquotaAdminPanel({ matches, teams }: SuperquotaAdminPanelProps) {
@@ -401,7 +393,7 @@ export function SuperquotaAdminPanel({ matches, teams }: SuperquotaAdminPanelPro
         </StatusPill>
       </div>
 
-      {message ? <p className="form-message superquota-admin__message">{message}</p> : null}
+      {message ? <p className="form-message superquota-admin__message" role="status" aria-live="polite">{message}</p> : null}
 
       <div className="superquota-admin__layout">
         <form
@@ -539,7 +531,7 @@ export function SuperquotaAdminPanel({ matches, teams }: SuperquotaAdminPanelPro
                 <div className="superquota-market__options">
                   {marketOptions.map((option) => (
                     <span className={option.id === market.correct_option_id ? 'is-correct' : ''} key={option.id}>
-                      {option.label} · {option.points ?? market.default_points} pt{(option.points ?? market.default_points) === 1 ? '' : 's'}
+                      {option.label} · {effectiveSuperquotaPoints(option.points, market.default_points)} pt{effectiveSuperquotaPoints(option.points, market.default_points) === 1 ? '' : 's'}
                     </span>
                   ))}
                 </div>
@@ -547,6 +539,9 @@ export function SuperquotaAdminPanel({ matches, teams }: SuperquotaAdminPanelPro
                   <span>{MARKET_TYPE_LABELS[market.market_type]}</span>
                   <span>{predictionCount} respuesta{predictionCount === 1 ? '' : 's'}</span>
                   {correctOption ? <span>Correcta: {correctOption.label}</span> : null}
+                  {market.published_at ? <span>Publicada: {formatMadridDateTime(market.published_at)}</span> : null}
+                  {market.resolved_at ? <span>Resuelta: {formatMadridDateTime(market.resolved_at)}</span> : null}
+                  {market.cancelled_at ? <span>Anulada: {formatMadridDateTime(market.cancelled_at)}</span> : null}
                 </div>
 
                 {market.status === 'PUBLISHED' && hasStarted ? (

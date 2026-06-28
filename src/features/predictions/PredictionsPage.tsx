@@ -381,6 +381,10 @@ export function PredictionsPage() {
     }));
   };
 
+  const updateScoreDraft = (matchId: string, side: 'home' | 'away', value: string) => {
+    updateDraft(matchId, { [side]: value, advancingTeamId: '' });
+  };
+
   const showTeamProfile = (teamId: string) => {
     setSelectedTeamId(teamId);
     window.requestAnimationFrame(() => {
@@ -575,7 +579,9 @@ export function PredictionsPage() {
     const locked = isLocked(match);
     const disabled = locked || !match.homeTeamId || !match.awayTeamId;
     const isSubmitting = savingMatchId === match.id;
-    const canSave = !disabled && isCompleteDraft(draft) && !savingMatchId;
+    const hasCompleteDraft = isCompleteDraft(draft);
+    const isKnockoutDraw = match.stage !== 'GROUP' && hasCompleteDraft && Number(draft.home) === Number(draft.away);
+    const canSave = !disabled && hasCompleteDraft && (!isKnockoutDraw || Boolean(draft.advancingTeamId)) && !savingMatchId;
     const savedDraft = savedPredictions[match.id];
     const hasSavedPrediction = Boolean(savedDraft);
     const editorGlowClass = readOnly
@@ -599,8 +605,6 @@ export function PredictionsPage() {
             ? 'correct'
             : 'miss'
         : undefined;
-    const isKnockoutDraw = match.stage !== 'GROUP' && draft !== undefined && draft.home !== '' && draft.away !== '' && draft.home === draft.away;
-
     if (readOnly) {
       return (
         <MatchCard
@@ -636,7 +640,7 @@ export function PredictionsPage() {
                 placeholder="0"
                 value={draft?.home ?? ''}
                 disabled={disabled}
-                onChange={(event) => updateDraft(match.id, { home: event.target.value })}
+                onChange={(event) => updateScoreDraft(match.id, 'home', event.target.value)}
               />
               <span>-</span>
               <input
@@ -646,7 +650,7 @@ export function PredictionsPage() {
                 placeholder="0"
                 value={draft?.away ?? ''}
                 disabled={disabled}
-                onChange={(event) => updateDraft(match.id, { away: event.target.value })}
+                onChange={(event) => updateScoreDraft(match.id, 'away', event.target.value)}
               />
             </div>
             {match.stage !== 'GROUP' ? (
