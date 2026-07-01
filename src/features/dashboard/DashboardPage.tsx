@@ -1,20 +1,15 @@
-import { ArrowDown, ArrowRight, ArrowUp, CalendarDays, ChevronLeft, ChevronRight, Minus, Target } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { CalendarDays, ChevronLeft, ChevronRight, Target } from 'lucide-react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { MatchCard } from '../../components/MatchCard';
-import { RecentPredictionResults } from '../../components/RecentPredictionResults';
-import { demoMatches, demoRanking, teamName } from '../../data/demoTournament';
+import { RecentPredictionResults, type SuperquotaResult } from '../../components/RecentPredictionResults';
+import { demoMatches, demoRanking, demoTeams, teamName } from '../../data/demoTournament';
+import { flagForTeamId } from '../../data/teamFlags';
 import { type DecidedBy, type GroupLetter, type Match, type MatchStatus, type Stage } from '../../domain/worldCupEngine';
 import { formatMadridDateTime, formatScore } from '../../lib/format';
 import { formatRankingPosition } from '../../lib/ranking';
 import { isSupabaseConfigured, supabase } from '../../lib/supabase';
-import {
-  formatCountdown,
-  getSpecialPredictionDeadline,
-  SPECIAL_PREDICTION_POINTS,
-  type SpecialPredictionRow,
-  type VisibleSpecialPredictionRow,
-} from '../../lib/specialPredictions';
+import { getSpecialPredictionDeadline, SPECIAL_PREDICTION_POINTS, type SpecialPredictionRow } from '../../lib/specialPredictions';
 import { SuperquotaPredictionPanel } from '../superquota/SuperquotaPredictionPanel';
 
 const MADRID_TIME_ZONE = 'Europe/Madrid';
@@ -43,6 +38,29 @@ type PredictionRow = {
   predicted_home_score: number;
   predicted_away_score: number;
   points_awarded: number;
+  updated_at: string;
+};
+
+type SuperquotaPointsRow = {
+  market_id: string;
+  option_id: string;
+  points_awarded: number;
+  is_void: boolean;
+  updated_at: string;
+};
+
+type SuperquotaResultMarketRow = {
+  id: string;
+  match_id: string;
+  title: string;
+  status: 'PUBLISHED' | 'RESOLVED';
+  correct_option_id: string | null;
+  resolved_at: string | null;
+};
+
+type SuperquotaResultOptionRow = {
+  id: string;
+  label: string;
 };
 
 type VisiblePredictionRow = PredictionRow & {
@@ -63,20 +81,11 @@ type RankedRow = RankingRow & {
   position: number;
 };
 
-type DailyDeltaRow = {
-  user_id: string;
-  display_name: string;
-  current_position: number;
-  previous_position: number;
-  position_delta: number;
-  points_on_day: number;
-  current_total_points: number;
-};
-
 type PredictionState = 'exact' | 'outcome' | 'miss' | 'none' | 'pending';
 
 type VisiblePredictionMatchGroup = {
   match: Match;
+  ownAnswer: string | null;
   predictions: VisiblePredictionRow[];
 };
 
@@ -97,6 +106,7 @@ type VisibleSuperquotaGroup = {
   match: Match;
   marketId: string;
   title: string;
+  ownAnswer: string | null;
   predictions: VisibleSuperquotaPredictionRow[];
 };
 
@@ -144,6 +154,11 @@ function getPredictionState(match: Match, prediction: PredictionRow | undefined)
   if (match.status !== 'FINAL' || match.homeScore === null || match.awayScore === null) return 'pending';
   if (prediction.predicted_home_score === match.homeScore && prediction.predicted_away_score === match.awayScore) return 'exact';
   return prediction.points_awarded > 0 ? 'outcome' : 'miss';
+}
+
+function compactTeamName(teamId: string | null): string {
+  if (!teamId) return 'TBD';
+  return demoTeams.find((team) => team.id === teamId)?.shortName ?? teamId;
 }
 
 function predictionStateCopy(state: PredictionState): { label: string; tone: string } {
@@ -213,11 +228,10 @@ export function DashboardPage() {
   const [predictions, setPredictions] = useState<Record<string, PredictionRow>>({});
   const [visiblePredictions, setVisiblePredictions] = useState<Record<string, VisiblePredictionRow[]>>({});
   const [specialPrediction, setSpecialPrediction] = useState<SpecialPredictionRow | null>(null);
-  const [visibleSpecialPredictions, setVisibleSpecialPredictions] = useState<VisibleSpecialPredictionRow[]>([]);
   const [visibleSuperquotaPredictions, setVisibleSuperquotaPredictions] = useState<VisibleSuperquotaPredictionRow[]>([]);
-  const [dailyDeltas, setDailyDeltas] = useState<DailyDeltaRow[]>([]);
-  const [superquotaPointsToday, setSuperquotaPointsToday] = useState(0);
-  const [isDailyDeltaReady, setIsDailyDeltaReady] = useState(!isSupabaseConfigured);
+  const [superquotaPointRows, setSuperquotaPointRows] = useState<SuperquotaPointsRow[]>([]);
+  const [superquotaResultMarkets, setSuperquotaResultMarkets] = useState<SuperquotaResultMarketRow[]>([]);
+  const [superquotaResultOptions, setSuperquotaResultOptions] = useState<SuperquotaResultOptionRow[]>([]);
   const [rankingRows, setRankingRows] = useState<RankingRow[]>(
     demoRanking.map((row) => ({
       display_name: row.name,
@@ -252,18 +266,16 @@ export function DashboardPage() {
 
       const currentUserId = userResult.user?.id ?? null;
       setUserId(currentUserId);
-      const yesterdayKey = addDaysToDayKey(getPredictionDayKey(new Date()), -1);
-
       const [
         matchResult,
         rankingResult,
         predictionResult,
-        deltaResult,
         visiblePredictionResult,
         specialPredictionResult,
-        visibleSpecialResult,
         visibleSuperquotaResult,
-        superquotaPointsTodayResult,
+        superquotaPointsResult,
+        superquotaMarketsResult,
+        superquotaOptionsResult,
       ] = await Promise.all([
         supabase!
           .from('matches')
@@ -279,10 +291,9 @@ export function DashboardPage() {
         currentUserId
           ? supabase!
               .from('predictions')
-              .select('match_id, predicted_home_score, predicted_away_score, points_awarded')
+              .select('match_id, predicted_home_score, predicted_away_score, points_awarded, updated_at')
               .eq('user_id', currentUserId)
           : Promise.resolve({ data: [], error: null }),
-        supabase!.rpc('ranking_daily_delta', { p_day: yesterdayKey }),
         supabase!.rpc('visible_match_predictions'),
         currentUserId
           ? supabase!
@@ -293,11 +304,20 @@ export function DashboardPage() {
               .eq('user_id', currentUserId)
               .maybeSingle()
           : Promise.resolve({ data: null, error: null }),
-        supabase!.rpc('visible_special_predictions'),
         supabase!.rpc('visible_superquota_predictions'),
         currentUserId
-          ? supabase!.rpc('user_superquota_points_on_day', { p_day: getPredictionDayKey(new Date()) })
-          : Promise.resolve({ data: 0, error: null }),
+          ? supabase!
+              .from('superquota_predictions')
+              .select('market_id, option_id, points_awarded, is_void, updated_at')
+              .eq('user_id', currentUserId)
+          : Promise.resolve({ data: [], error: null }),
+        supabase!
+          .from('superquota_markets')
+          .select('id, match_id, title, status, correct_option_id, resolved_at')
+          .in('status', ['PUBLISHED', 'RESOLVED']),
+        supabase!
+          .from('superquota_options')
+          .select('id, label'),
       ]);
 
       if (!isMounted) return;
@@ -316,13 +336,6 @@ export function DashboardPage() {
         );
       }
 
-      if (!deltaResult.error) {
-        setDailyDeltas((deltaResult.data ?? []) as DailyDeltaRow[]);
-        setIsDailyDeltaReady(true);
-      } else {
-        setIsDailyDeltaReady(false);
-      }
-
       if (!visiblePredictionResult.error) {
         const groupedPredictions = ((visiblePredictionResult.data ?? []) as VisiblePredictionRow[]).reduce<
           Record<string, VisiblePredictionRow[]>
@@ -337,16 +350,20 @@ export function DashboardPage() {
         setSpecialPrediction((specialPredictionResult.data as SpecialPredictionRow | null) ?? null);
       }
 
-      if (!visibleSpecialResult.error) {
-        setVisibleSpecialPredictions((visibleSpecialResult.data ?? []) as VisibleSpecialPredictionRow[]);
-      }
-
       if (!visibleSuperquotaResult.error) {
         setVisibleSuperquotaPredictions((visibleSuperquotaResult.data ?? []) as VisibleSuperquotaPredictionRow[]);
       }
 
-      if (!superquotaPointsTodayResult.error) {
-        setSuperquotaPointsToday(Number(superquotaPointsTodayResult.data ?? 0));
+      if (!superquotaPointsResult.error) {
+        setSuperquotaPointRows((superquotaPointsResult.data ?? []) as SuperquotaPointsRow[]);
+      }
+
+      if (!superquotaMarketsResult.error) {
+        setSuperquotaResultMarkets((superquotaMarketsResult.data ?? []) as SuperquotaResultMarketRow[]);
+      }
+
+      if (!superquotaOptionsResult.error) {
+        setSuperquotaResultOptions((superquotaOptionsResult.data ?? []) as SuperquotaResultOptionRow[]);
       }
 
       setIsLoading(false);
@@ -387,29 +404,44 @@ export function DashboardPage() {
   const rankedRows = useMemo(() => rankRows(rankingRows), [rankingRows]);
   const specialDeadline = useMemo(() => getSpecialPredictionDeadline(matches), [matches]);
   const isSpecialClosed = now >= specialDeadline.getTime();
-  const specialCountdown = formatCountdown(specialDeadline, now);
-  const publicSpecialPredictions = isSpecialClosed ? visibleSpecialPredictions : [];
   const currentUserRank = rankedRows.find((row) => row.user_id === userId) ?? null;
-  const currentUserDelta = dailyDeltas.find((row) => row.user_id === userId) ?? null;
-  const todayPoints = Object.values(predictions).reduce((total, prediction) => {
-    const match = matches.find((item) => item.id === prediction.match_id);
-    if (!match || match.status !== 'FINAL' || getPredictionDayKey(match.kickoffAt) !== currentPredictionDayKey) return total;
-    return total + prediction.points_awarded;
-  }, superquotaPointsToday);
-  const rankDelta = currentUserDelta?.position_delta ?? 0;
-  const rankDeltaCopy = !currentUserRank
-    ? { label: '-', tone: 'neutral', Icon: Minus }
-    : !isDailyDeltaReady
-      ? { label: 'Pendiente', tone: 'neutral', Icon: Minus }
-      : rankDelta > 0
-      ? { label: `+${rankDelta}`, tone: 'good', Icon: ArrowUp }
-      : rankDelta < 0
-        ? { label: String(rankDelta), tone: 'danger', Icon: ArrowDown }
-        : { label: '0', tone: 'neutral', Icon: Minus };
+  const rollingDayCutoff = now - 24 * 60 * 60 * 1000;
+  const jornadaPoints = Object.values(predictions).reduce(
+    (total, prediction) =>
+      new Date(prediction.updated_at).getTime() >= rollingDayCutoff ? total + prediction.points_awarded : total,
+    superquotaPointRows.reduce(
+      (total, prediction) =>
+        !prediction.is_void && new Date(prediction.updated_at).getTime() >= rollingDayCutoff
+          ? total + prediction.points_awarded
+          : total,
+      specialPrediction && new Date(specialPrediction.updated_at).getTime() >= rollingDayCutoff
+        ? specialPrediction.points_awarded
+        : 0,
+    ),
+  );
+  const recentSuperquotaResults = useMemo<SuperquotaResult[]>(() => {
+    const marketsById = new Map(superquotaResultMarkets.map((market) => [market.id, market]));
+    const optionsById = new Map(superquotaResultOptions.map((option) => [option.id, option]));
+
+    return superquotaPointRows.flatMap((prediction) => {
+      const market = marketsById.get(prediction.market_id);
+      const selectedOption = optionsById.get(prediction.option_id);
+      const correctOption = market?.correct_option_id ? optionsById.get(market.correct_option_id) : null;
+      if (prediction.is_void || !market?.resolved_at || !selectedOption || !correctOption) return [];
+      return [{
+        id: prediction.market_id,
+        title: market.title,
+        selectedAnswer: selectedOption.label,
+        correctAnswer: correctOption.label,
+        points: prediction.points_awarded,
+        resolvedAt: market.resolved_at,
+      }];
+    });
+  }, [superquotaPointRows, superquotaResultMarkets, superquotaResultOptions]);
   const visiblePredictionGroups = useMemo<VisiblePredictionMatchGroup[]>(
     () =>
       matches
-        .filter((match) => match.status !== 'FINAL')
+        .filter((match) => match.status === 'LIVE')
         .sort((a, b) => {
           const kickoffDiff = new Date(a.kickoffAt).getTime() - new Date(b.kickoffAt).getTime();
           if (kickoffDiff !== 0) return kickoffDiff;
@@ -417,44 +449,37 @@ export function DashboardPage() {
         })
         .map((match) => ({
           match,
+          ownAnswer: predictions[match.id]
+            ? `${predictions[match.id].predicted_home_score}-${predictions[match.id].predicted_away_score}`
+            : null,
           predictions: (visiblePredictions[match.id] ?? [])
             .filter((prediction) => !userId || prediction.user_id !== userId)
             .sort((a, b) => a.display_name.localeCompare(b.display_name)),
         }))
-        .filter((group) => group.predictions.length > 0)
         .slice(0, 6),
-    [matches, userId, visiblePredictions],
+    [matches, predictions, userId, visiblePredictions],
   );
   const visibleSuperquotaGroups = useMemo<VisibleSuperquotaGroup[]>(() => {
-    const grouped = new Map<string, VisibleSuperquotaGroup>();
-
-    visibleSuperquotaPredictions
-      .filter((prediction) => !userId || prediction.user_id !== userId)
-      .forEach((prediction) => {
-        const match = matches.find((candidate) => candidate.id === prediction.match_id);
-        if (!match) return;
-        const current = grouped.get(prediction.market_id);
-        if (current) {
-          current.predictions.push(prediction);
-        } else {
-          grouped.set(prediction.market_id, {
-            match,
-            marketId: prediction.market_id,
-            title: prediction.market_title,
-            predictions: [prediction],
-          });
-        }
-      });
-
-    return [...grouped.values()]
-      .map((group) => ({
-        ...group,
-        predictions: group.predictions.sort((a, b) => a.display_name.localeCompare(b.display_name)),
-      }))
+    return superquotaResultMarkets
+      .filter((market) => market.status === 'PUBLISHED')
+      .flatMap((market) => {
+        const match = matches.find((candidate) => candidate.id === market.match_id && candidate.status === 'LIVE');
+        if (!match) return [];
+        const marketPredictions = visibleSuperquotaPredictions.filter((prediction) => prediction.market_id === market.id);
+        const ownPrediction = marketPredictions.find((prediction) => prediction.user_id === userId);
+        return [{
+          match,
+          marketId: market.id,
+          title: market.title,
+          ownAnswer: ownPrediction?.option_label ?? null,
+          predictions: marketPredictions
+            .filter((prediction) => !userId || prediction.user_id !== userId)
+            .sort((a, b) => a.display_name.localeCompare(b.display_name)),
+        }];
+      })
       .sort((a, b) => new Date(a.match.kickoffAt).getTime() - new Date(b.match.kickoffAt).getTime());
-  }, [matches, userId, visibleSuperquotaPredictions]);
-  const visiblePublicPredictionGroupCount =
-    visiblePredictionGroups.length + visibleSuperquotaGroups.length + (publicSpecialPredictions.length > 0 ? 1 : 0);
+  }, [matches, superquotaResultMarkets, userId, visibleSuperquotaPredictions]);
+  const visiblePublicPredictionGroupCount = visiblePredictionGroups.length + visibleSuperquotaGroups.length;
   const updatePublicSliderState = useCallback(() => {
     const slider = publicPredictionsRef.current;
     if (!slider) {
@@ -485,7 +510,7 @@ export function DashboardPage() {
       slider.removeEventListener('scroll', updatePublicSliderState);
       window.removeEventListener('resize', updatePublicSliderState);
     };
-  }, [updatePublicSliderState, visiblePredictionGroups.length]);
+  }, [updatePublicSliderState, visiblePublicPredictionGroupCount]);
 
   const scrollPublicPredictions = (direction: 'left' | 'right') => {
     const slider = publicPredictionsRef.current;
@@ -501,16 +526,16 @@ export function DashboardPage() {
   const renderSpecialPredictionSummary = (prediction: SpecialPredictionRow) => (
     <div className="special-selection-list">
       <span>
-        Campeón <b>{teamName(prediction.champion_team_id)}</b>
+        Campeón <b>{teamName(prediction.champion_team_id)}</b><small>+{SPECIAL_PREDICTION_POINTS.champion}</small>
       </span>
       <span>
-        Mejor jugador <b>{prediction.best_player_name}</b>
+        Mejor jugador <b>{prediction.best_player_name}</b><small>+{SPECIAL_PREDICTION_POINTS.bestPlayer}</small>
       </span>
       <span>
-        Máximo goleador <b>{prediction.top_scorer_player_name}</b>
+        Máximo goleador <b>{prediction.top_scorer_player_name}</b><small>+{SPECIAL_PREDICTION_POINTS.topScorer}</small>
       </span>
       <span>
-        Máximo asistente <b>{prediction.top_assist_player_name}</b>
+        Máximo asistente <b>{prediction.top_assist_player_name}</b><small>+{SPECIAL_PREDICTION_POINTS.topAssist}</small>
       </span>
     </div>
   );
@@ -522,58 +547,35 @@ export function DashboardPage() {
           <p className="eyebrow">Resumen de la porra</p>
           <h1>Inicio</h1>
         </div>
-        <Link className="primary-link" to="/predicciones">
-          Mis predicciones <ArrowRight size={16} />
-        </Link>
       </div>
 
       {message ? <p className="form-message">{message}</p> : null}
       {isLoading ? <p className="empty-state">Cargando resumen...</p> : null}
 
-      {userId ? <SuperquotaPredictionPanel matches={matches} now={now} userId={userId} variant="spotlight" /> : null}
-
-      <div className="metric-grid">
+      <div className="metric-grid metric-grid--dashboard">
         <article className="metric">
           <Target size={22} />
           <span>Posición ranking</span>
           <strong>{formatRankingPosition(currentUserRank?.position)}</strong>
         </article>
-        <article className="metric">
+        <article className="metric metric--good">
           <CalendarDays size={22} />
-          <span>Puntos hoy</span>
-          <strong>+{todayPoints}</strong>
-        </article>
-        <article className={`metric metric--${rankDeltaCopy.tone}`}>
-          <rankDeltaCopy.Icon size={22} />
-          <span>Cambio ranking</span>
-          <strong>{rankDeltaCopy.label}</strong>
+          <span>Puntos jornada</span>
+          <strong>+{jornadaPoints}</strong>
         </article>
       </div>
 
-      <section className={`special-announcement${isSpecialClosed ? ' special-announcement--closed' : ''}`}>
-        <div className="special-announcement__content">
-          <p className="eyebrow">Predicción especial</p>
-          <h2>{isSpecialClosed ? 'La predicción especial está cerrada' : 'Última llamada antes de eliminatorias'}</h2>
-          <p>
-            Acierta el campeón {SPECIAL_PREDICTION_POINTS.champion} pts, mejor jugador {SPECIAL_PREDICTION_POINTS.bestPlayer} pts, goleador{' '}
-            {SPECIAL_PREDICTION_POINTS.topScorer} pts y asistente {SPECIAL_PREDICTION_POINTS.topAssist} pts.
-          </p>
-          {specialPrediction ? renderSpecialPredictionSummary(specialPrediction) : <p className="empty-state">Todavía no has guardado esta predicción.</p>}
-        </div>
-        <div className="special-announcement__action">
-          <strong className="countdown-alert">{isSpecialClosed ? 'Cerrada' : specialCountdown}</strong>
-          <span>Hasta {formatMadridDateTime(specialDeadline.toISOString())}</span>
-          <Link className="primary-link" to="/predicciones">
-            {specialPrediction ? 'Ver o modificar' : 'Registrar predicción'} <ArrowRight size={16} />
-          </Link>
-        </div>
-      </section>
+      {userId ? <SuperquotaPredictionPanel matches={matches} now={now} userId={userId} variant="spotlight" /> : null}
 
-      <RecentPredictionResults matches={matches} predictions={Object.fromEntries(Object.entries(predictions).map(([matchId, prediction]) => [matchId, {
-        home: prediction.predicted_home_score,
-        away: prediction.predicted_away_score,
-        points: prediction.points_awarded,
-      }]))} />
+      <RecentPredictionResults
+        matches={matches}
+        predictions={Object.fromEntries(Object.entries(predictions).map(([matchId, prediction]) => [matchId, {
+          home: prediction.predicted_home_score,
+          away: prediction.predicted_away_score,
+          points: prediction.points_awarded,
+        }]))}
+        superquotaResults={recentSuperquotaResults}
+      />
 
       <div className="split-section dashboard-main">
         <section className="prediction-section dashboard-predictions-section">
@@ -589,15 +591,33 @@ export function DashboardPage() {
               </div>
               <div className="match-list">
                 {predictedTodayMatches.length > 0 ? (
-                  predictedTodayMatches.map((match) => (
-                    <MatchCard
-                      key={match.id}
-                      match={match}
-                      prediction={toCardPrediction(predictions[match.id])}
-                      glow={getDashboardPredictionGlow(match, predictions[match.id])}
-                      hideStatusPill
-                    />
-                  ))
+                  predictedTodayMatches.map((match) => {
+                    const prediction = predictions[match.id];
+                    const isModifiable = new Date(match.kickoffAt).getTime() > now;
+                    return (
+                      <article className={`table-card dashboard-saved-prediction${isModifiable ? ' is-modifiable' : ''}`} key={match.id}>
+                        <div className="dashboard-saved-prediction__header">
+                          <time dateTime={match.kickoffAt}>{formatMadridDateTime(match.kickoffAt)}</time>
+                        </div>
+                        <div className="dashboard-saved-prediction__body">
+                          <div className={`dashboard-saved-prediction__match${isModifiable ? ' is-modifiable' : ''}`}>
+                            <span className="dashboard-saved-prediction__team">
+                              <span aria-hidden="true">{flagForTeamId(match.homeTeamId)}</span>
+                              <strong>{compactTeamName(match.homeTeamId)}</strong>
+                            </span>
+                            <strong className="dashboard-saved-prediction__score">{prediction.predicted_home_score}</strong>
+                            <span className="dashboard-saved-prediction__separator">–</span>
+                            <strong className="dashboard-saved-prediction__score">{prediction.predicted_away_score}</strong>
+                            <span className="dashboard-saved-prediction__team">
+                              <span aria-hidden="true">{flagForTeamId(match.awayTeamId)}</span>
+                              <strong>{compactTeamName(match.awayTeamId)}</strong>
+                            </span>
+                          </div>
+                          <Link className="dashboard-saved-prediction__modify" to="/predicciones">Modificar</Link>
+                        </div>
+                      </article>
+                    );
+                  })
                 ) : (
                   <section className="table-card">
                     <p className="empty-state">Todavía no has guardado predicciones para los partidos de este día.</p>
@@ -634,6 +654,16 @@ export function DashboardPage() {
               </div>
             </section>
           </div>
+
+          <section className="special-announcement">
+            <div className="special-announcement__heading">
+              <h2>Predicción especial</h2>
+              <strong className={`special-announcement__status${isSpecialClosed ? ' is-closed' : ''}`}>
+                {isSpecialClosed ? 'Cerrada' : 'Abierta'}
+              </strong>
+            </div>
+            {specialPrediction ? renderSpecialPredictionSummary(specialPrediction) : <p className="empty-state">Sin predicción guardada</p>}
+          </section>
         </section>
 
         <section className="prediction-section dashboard-public-section">
@@ -642,76 +672,58 @@ export function DashboardPage() {
             <span>{visiblePublicPredictionGroupCount}</span>
           </div>
           <div className="table-card rank-predictions">
-            {visiblePredictionGroups.length > 0 || visibleSuperquotaGroups.length > 0 || publicSpecialPredictions.length > 0 ? (
+            {visiblePredictionGroups.length > 0 ? (
               <>
-                {visibleSuperquotaGroups.map((group) => (
-                  <article className="public-prediction-match public-prediction-match--superquota" key={`superquota-${group.marketId}`}>
-                    <div className="public-prediction-match__header">
-                      <div>
-                        <span>Supercuota · {teamName(group.match.homeTeamId)} vs {teamName(group.match.awayTeamId)}</span>
-                        <h4>{group.title}</h4>
-                      </div>
-                      <span className="match-card__state match-card__state--locked">
-                        <span className="match-card__state-dot" />
-                        Cerrada
-                      </span>
-                    </div>
-                    <div className="public-prediction-match__rows">
-                      {group.predictions.map((prediction) => (
-                        <div className="public-prediction-row" key={`${prediction.market_id}-${prediction.user_id}`}>
-                          <strong>{prediction.display_name}</strong>
-                          <b>{prediction.option_label}</b>
-                        </div>
-                      ))}
-                    </div>
-                  </article>
-                ))}
-                {publicSpecialPredictions.length > 0 ? (
-                  <article className="public-prediction-match public-prediction-match--special">
-                    <div className="public-prediction-match__header">
-                      <h4>Predicción especial</h4>
-                      <span className="match-card__state match-card__state--locked">
-                        <span className="match-card__state-dot" />
-                        Cerrada
-                      </span>
-                    </div>
-                    <div className="public-prediction-match__rows">
-                      {publicSpecialPredictions.map((prediction) => (
-                        <div className="public-prediction-row public-prediction-row--special" key={`special-${prediction.user_id}`}>
-                          <strong>{prediction.display_name}</strong>
-                          <span>{teamName(prediction.champion_team_id)}</span>
-                          <small>{prediction.best_player_name}</small>
-                          <small>{prediction.top_scorer_player_name}</small>
-                          <small>{prediction.top_assist_player_name}</small>
-                          <b>+{prediction.points_awarded}</b>
-                        </div>
-                      ))}
-                    </div>
-                  </article>
-                ) : null}
                 <div className="public-predictions" ref={publicPredictionsRef}>
                 {visiblePredictionGroups.map((group) => (
-                  <article className="public-prediction-match" key={group.match.id}>
-                    <div className="public-prediction-match__header">
-                      <h4>
-                        {teamName(group.match.homeTeamId)} vs {teamName(group.match.awayTeamId)}
-                      </h4>
-                      <span className="match-card__state match-card__state--locked">
-                        <span className="match-card__state-dot" />
-                        En juego
-                      </span>
-                    </div>
-                    <div className="public-prediction-match__rows">
-                      {group.predictions.map((prediction) => (
-                        <div className="public-prediction-row" key={`${prediction.match_id}-${prediction.user_id}`}>
-                          <strong>{prediction.display_name}</strong>
-                          <b>
-                            {prediction.predicted_home_score}-{prediction.predicted_away_score}
-                          </b>
+                  <Fragment key={group.match.id}>
+                    <article className="public-prediction-match">
+                      <div className="public-prediction-match__header">
+                        <div className="public-prediction-match__title">
+                          <h4>{teamName(group.match.homeTeamId)} vs {teamName(group.match.awayTeamId)}</h4>
+                          <span>Tu apuesta: <b>{group.ownAnswer ?? 'Sin respuesta'}</b></span>
                         </div>
+                        <span className="match-card__state match-card__state--locked">
+                          <span className="match-card__state-dot" />
+                          En juego
+                        </span>
+                      </div>
+                      <div className="public-prediction-match__rows">
+                        {group.predictions.length > 0 ? group.predictions.map((prediction) => (
+                          <div className="public-prediction-row" key={`${prediction.match_id}-${prediction.user_id}`}>
+                            <strong>{prediction.display_name}</strong>
+                            <b>{prediction.predicted_home_score}-{prediction.predicted_away_score}</b>
+                          </div>
+                        )) : <p className="empty-state">Nadie más respondió este partido.</p>}
+                      </div>
+                    </article>
+
+                    {visibleSuperquotaGroups
+                      .filter((superquota) => superquota.match.id === group.match.id)
+                      .map((superquota) => (
+                        <article className="public-prediction-match public-prediction-match--superquota" key={`superquota-${superquota.marketId}`}>
+                          <div className="public-prediction-match__header">
+                            <div className="public-prediction-match__title">
+                              <span>Supercuota · {teamName(superquota.match.homeTeamId)} vs {teamName(superquota.match.awayTeamId)}</span>
+                              <h4>{superquota.title}</h4>
+                              <span>Tu apuesta: <b>{superquota.ownAnswer ?? 'Sin respuesta'}</b></span>
+                            </div>
+                            <span className="match-card__state match-card__state--locked">
+                              <span className="match-card__state-dot" />
+                              En juego
+                            </span>
+                          </div>
+                          <div className="public-prediction-match__rows">
+                            {superquota.predictions.length > 0 ? superquota.predictions.map((prediction) => (
+                              <div className="public-prediction-row" key={`${prediction.market_id}-${prediction.user_id}`}>
+                                <strong>{prediction.display_name}</strong>
+                                <b>{prediction.option_label}</b>
+                              </div>
+                            )) : <p className="empty-state">Nadie más respondió esta Supercuota.</p>}
+                          </div>
+                        </article>
                       ))}
-                    </div>
-                  </article>
+                  </Fragment>
                 ))}
                 </div>
                 <button
@@ -734,9 +746,7 @@ export function DashboardPage() {
                 </button>
               </>
             ) : (
-              <p className="empty-state">
-                Solo podrás ver las apuestas de los demás cuando el partido esté en juego. La predicción especial se verá al cerrar la fase de grupos.
-              </p>
+              <p className="public-predictions__empty">Nada en juego</p>
             )}
           </div>
         </section>
@@ -758,7 +768,7 @@ export function DashboardPage() {
                 <article className={resultCardClassName(state)} key={match.id}>
                   {state === 'exact' || state === 'outcome' || state === 'miss' ? (
                     <span className="prediction-result-indicator" aria-hidden="true">
-                      {state === 'exact' ? '+3' : state === 'outcome' ? '+1' : '×'}
+                      {prediction && prediction.points_awarded > 0 ? `+${prediction.points_awarded}` : '×'}
                     </span>
                   ) : null}
                   <div>

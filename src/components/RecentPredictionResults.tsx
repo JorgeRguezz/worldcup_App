@@ -1,3 +1,5 @@
+import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { flagForTeamId } from '../data/teamFlags';
 import { teamName } from '../data/demoTournament';
 import type { Match } from '../domain/worldCupEngine';
@@ -11,25 +13,23 @@ type CompactPrediction = {
 type RecentPredictionResultsProps = {
   matches: Match[];
   predictions: Record<string, CompactPrediction | undefined>;
+  superquotaResults?: SuperquotaResult[];
 };
 
-type RecentPredictionState = 'exact' | 'outcome' | 'miss';
+export type SuperquotaResult = {
+  id: string;
+  title: string;
+  selectedAnswer: string;
+  correctAnswer: string;
+  points: number;
+  resolvedAt: string;
+};
 
 const RECENT_RESULTS_WINDOW_MS = 24 * 60 * 60 * 1000;
 
-function getRecentPredictionState(match: Match, prediction: CompactPrediction): RecentPredictionState {
-  if (prediction.home === match.homeScore && prediction.away === match.awayScore) return 'exact';
-  return prediction.points > 0 ? 'outcome' : 'miss';
-}
-
-function getRecentPredictionCopy(match: Match, state: RecentPredictionState): string {
-  if (state === 'exact') return 'Resultado exacto!';
-  if (state === 'outcome' && match.homeScore !== null && match.awayScore !== null && match.homeScore === match.awayScore) return 'Empate acertado';
-  if (state === 'outcome') return 'Ganador acertado';
-  return 'Perdida';
-}
-
-export function RecentPredictionResults({ matches, predictions }: RecentPredictionResultsProps) {
+export function RecentPredictionResults({ matches, predictions, superquotaResults = [] }: RecentPredictionResultsProps) {
+  const sliderRef = useRef<HTMLDivElement | null>(null);
+  const [sliderState, setSliderState] = useState({ canGoLeft: false, canGoRight: false });
   const now = Date.now();
   const recentResults = matches
     .filter((match) => {
@@ -44,34 +44,81 @@ export function RecentPredictionResults({ matches, predictions }: RecentPredicti
       );
     })
     .sort((a, b) => new Date(b.kickoffAt).getTime() - new Date(a.kickoffAt).getTime());
+  const recentSuperquotaResults = superquotaResults
+    .filter((result) => {
+      const resolvedAt = new Date(result.resolvedAt).getTime();
+      return resolvedAt <= now && now - resolvedAt <= RECENT_RESULTS_WINDOW_MS;
+    })
+    .sort((a, b) => new Date(b.resolvedAt).getTime() - new Date(a.resolvedAt).getTime());
+  const resultCount = recentResults.length + recentSuperquotaResults.length;
+
+  const updateSliderState = useCallback(() => {
+    const slider = sliderRef.current;
+    if (!slider) {
+      setSliderState({ canGoLeft: false, canGoRight: false });
+      return;
+    }
+
+    const maxScrollLeft = slider.scrollWidth - slider.clientWidth;
+    const nextState = {
+      canGoLeft: slider.scrollLeft > 4,
+      canGoRight: maxScrollLeft - slider.scrollLeft > 4,
+    };
+    setSliderState((current) =>
+      current.canGoLeft === nextState.canGoLeft && current.canGoRight === nextState.canGoRight ? current : nextState,
+    );
+  }, []);
+
+  useEffect(() => {
+    updateSliderState();
+    const slider = sliderRef.current;
+    if (!slider) return;
+
+    slider.addEventListener('scroll', updateSliderState, { passive: true });
+    window.addEventListener('resize', updateSliderState);
+    return () => {
+      slider.removeEventListener('scroll', updateSliderState);
+      window.removeEventListener('resize', updateSliderState);
+    };
+  }, [resultCount, updateSliderState]);
+
+  const scrollResults = (direction: 'left' | 'right') => {
+    const slider = sliderRef.current;
+    if (!slider) return;
+    slider.scrollBy({
+      left: direction === 'left' ? -slider.clientWidth : slider.clientWidth,
+      behavior: 'smooth',
+    });
+    window.setTimeout(updateSliderState, 260);
+  };
 
   return (
     <section className="prediction-section recent-prediction-results">
       <div className="section-heading">
-        <h2>Resultados de tus predicciones</h2>
-        <span>{recentResults.length}</span>
+        <h2>Tus resultados de la jornada</h2>
+        <span>{resultCount}</span>
       </div>
-      {recentResults.length > 0 ? (
-        <div className="recent-prediction-results__grid">
+      {resultCount > 0 ? (
+        <div className="recent-prediction-results__carousel">
+        <div className="recent-prediction-results__grid" ref={sliderRef}>
           {recentResults.map((match) => {
             const prediction = predictions[match.id];
             if (!prediction) return null;
 
-            const state = getRecentPredictionState(match, prediction);
             const homeFlag = flagForTeamId(match.homeTeamId);
             const awayFlag = flagForTeamId(match.awayTeamId);
             const score = `${match.homeScore}-${match.awayScore}`;
             const predictedScore = `${prediction.home}-${prediction.away}`;
-            const stateCopy = getRecentPredictionCopy(match, state);
+            const isCorrect = prediction.points > 0;
 
             return (
               <article
-                className={`recent-prediction-result recent-prediction-result--${state}`}
+                className={`recent-prediction-result recent-prediction-result--${isCorrect ? 'correct' : 'miss'}`}
                 key={match.id}
-                aria-label={`${teamName(match.homeTeamId)} ${score} ${teamName(match.awayTeamId)}. Tu apuesta: ${predictedScore}. ${stateCopy}.`}
+                aria-label={`${teamName(match.homeTeamId)} ${score} ${teamName(match.awayTeamId)}. Tu apuesta: ${predictedScore}. ${prediction.points} puntos.`}
               >
                 <span className="prediction-result-indicator" aria-hidden="true">
-                  {state === 'exact' ? '+3' : state === 'outcome' ? '+1' : '×'}
+                  {isCorrect ? `+${prediction.points}` : '×'}
                 </span>
                 <div className="recent-prediction-result__scoreline">
                   <span className="recent-prediction-result__flag" aria-hidden="true">
@@ -86,11 +133,51 @@ export function RecentPredictionResults({ matches, predictions }: RecentPredicti
                   <span>
                     Tu apuesta <b>{predictedScore}</b>
                   </span>
-                  <small>{stateCopy}</small>
                 </div>
               </article>
             );
           })}
+          {recentSuperquotaResults.map((result) => {
+            const isCorrect = result.points > 0;
+            return (
+              <article
+                className={`recent-prediction-result recent-prediction-result--superquota recent-prediction-result--${isCorrect ? 'correct' : 'miss'}`}
+                key={`superquota-${result.id}`}
+                aria-label={`Supercuota: ${result.title}. Tu respuesta: ${result.selectedAnswer}. Respuesta correcta: ${result.correctAnswer}. ${result.points} puntos.`}
+              >
+                <span className="prediction-result-indicator" aria-hidden="true">
+                  {isCorrect ? `+${result.points}` : '×'}
+                </span>
+                <div className="recent-prediction-result__superquota-heading">
+                  <strong>Supercuota</strong>
+                  <span>{result.title}</span>
+                </div>
+                <div className="recent-prediction-result__detail recent-prediction-result__detail--answers">
+                  <span>Tu respuesta <b>{result.selectedAnswer}</b></span>
+                  {!isCorrect ? <span>Respuesta correcta <b>{result.correctAnswer}</b></span> : null}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+        <button
+          className="recent-prediction-results__control recent-prediction-results__control--left"
+          type="button"
+          aria-label="Ver resultados anteriores"
+          disabled={!sliderState.canGoLeft}
+          onClick={() => scrollResults('left')}
+        >
+          <ChevronLeft size={20} />
+        </button>
+        <button
+          className="recent-prediction-results__control recent-prediction-results__control--right"
+          type="button"
+          aria-label="Ver más resultados"
+          disabled={!sliderState.canGoRight}
+          onClick={() => scrollResults('right')}
+        >
+          <ChevronRight size={20} />
+        </button>
         </div>
       ) : (
         <section className="table-card recent-prediction-results__empty">

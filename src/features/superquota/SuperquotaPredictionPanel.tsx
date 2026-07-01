@@ -156,24 +156,21 @@ export function SuperquotaPredictionPanel({ matches, now, userId, variant = 'ful
     return message ? <p className="superquota-load-error" role="alert">{message}</p> : null;
   }
 
-  const displayedMarkets = variant === 'spotlight' ? openMarkets.slice(0, 1) : openMarkets;
-  const remainingMarketCount = openMarkets.length - displayedMarkets.length;
+  const displayedMarkets = openMarkets;
 
   return (
     <section className={`superquota-predictions superquota-predictions--${variant}`} aria-labelledby="superquota-predictions-title">
       <div className="superquota-predictions__heading">
         <span className="superquota-predictions__icon"><Sparkles size={20} /></span>
         <div>
-          <p className="eyebrow">Puntos especiales</p>
-          <h2 id="superquota-predictions-title">Supercuota</h2>
-        </div>
-        <div className="superquota-predictions__actions">
-          <span className="superquota-predictions__count">{openMarkets.length}</span>
-          {remainingMarketCount > 0 ? (
-            <Link to="/predicciones">
-              Ver {remainingMarketCount} más <ArrowRight size={15} />
-            </Link>
-          ) : null}
+          <div className="superquota-predictions__title-row">
+            <h2 id="superquota-predictions-title">Supercuotas</h2>
+            {variant === 'spotlight' ? (
+              <Link className="primary-link superquota-predictions__cta" to="/predicciones">
+                Predicciones <ArrowRight size={16} />
+              </Link>
+            ) : null}
+          </div>
         </div>
       </div>
 
@@ -191,7 +188,7 @@ export function SuperquotaPredictionPanel({ matches, now, userId, variant = 'ful
           const countdown = formatCountdown(new Date(match.kickoffAt), now);
 
           return (
-            <article className={`superquota-prediction-card${savedOptionId ? ' superquota-prediction-card--saved' : ''}`} key={market.id}>
+            <article className={`superquota-prediction-card${variant === 'full' && savedOptionId ? ' superquota-prediction-card--saved' : ''}`} key={market.id}>
               <div className="superquota-prediction-card__meta">
                 <strong>{matchLabel(match)}</strong>
                 <span><Clock3 size={14} /> Cierra en {countdown}</span>
@@ -199,37 +196,41 @@ export function SuperquotaPredictionPanel({ matches, now, userId, variant = 'ful
               <h3>{market.title}</h3>
               <p>{formatMadridDateTime(match.kickoffAt)}</p>
 
-              <div className="superquota-prediction-card__options" role="group" aria-label={market.title}>
-                {marketOptions.map((option) => {
-                  const isSelected = selectedOptionId === option.id;
-                  return (
-                    <button
-                      className={isSelected ? 'is-selected' : ''}
-                      type="button"
-                      aria-pressed={isSelected}
-                      key={option.id}
-                      onClick={() => setDraftSelections((current) => ({ ...current, [market.id]: option.id }))}
-                      disabled={isSaving}
-                    >
-                      <span>{isSelected ? <Check size={16} /> : null}{option.label}</span>
-                      <strong>+{effectiveSuperquotaPoints(option.points, market.default_points)}</strong>
-                    </button>
-                  );
-                })}
-              </div>
+              {variant === 'full' ? (
+                <>
+                  <div className="superquota-prediction-card__options" role="group" aria-label={market.title}>
+                    {marketOptions.map((option) => {
+                      const isSelected = selectedOptionId === option.id;
+                      return (
+                        <button
+                          className={isSelected ? 'is-selected' : ''}
+                          type="button"
+                          aria-pressed={isSelected}
+                          key={option.id}
+                          onClick={() => setDraftSelections((current) => ({ ...current, [market.id]: option.id }))}
+                          disabled={isSaving}
+                        >
+                          <span>{isSelected ? <Check size={16} /> : null}{option.label}</span>
+                          <strong>+{effectiveSuperquotaPoints(option.points, market.default_points)}</strong>
+                        </button>
+                      );
+                    })}
+                  </div>
 
-              <div className="superquota-prediction-card__footer">
-                <span>{savedOptionId ? (hasChanges ? 'Cambios sin guardar' : 'Respuesta guardada') : 'Elige una opción'}</span>
-                <button
-                  className="superquota-save-button"
-                  type="button"
-                  onClick={() => void saveSelection(market.id)}
-                  disabled={!selectedOptionId || (!hasChanges && Boolean(savedOptionId)) || isSaving || Boolean(savingMarketId && !isSaving)}
-                >
-                  {savedOptionId && !hasChanges ? <Check size={16} /> : savedOptionId ? <PencilLine size={16} /> : <Save size={16} />}
-                  {isSaving ? 'Guardando...' : savedOptionId && !hasChanges ? 'Respuesta guardada' : savedOptionId ? 'Modificar respuesta' : 'Guardar respuesta'}
-                </button>
-              </div>
+                  <div className="superquota-prediction-card__footer">
+                    <span>{savedOptionId ? (hasChanges ? 'Cambios sin guardar' : 'Respuesta guardada') : 'Elige una opción'}</span>
+                    <button
+                      className="superquota-save-button"
+                      type="button"
+                      onClick={() => void saveSelection(market.id)}
+                      disabled={!selectedOptionId || (!hasChanges && Boolean(savedOptionId)) || isSaving || Boolean(savingMarketId && !isSaving)}
+                    >
+                      {savedOptionId && !hasChanges ? <Check size={16} /> : savedOptionId ? <PencilLine size={16} /> : <Save size={16} />}
+                      {isSaving ? 'Guardando...' : savedOptionId && !hasChanges ? 'Respuesta guardada' : savedOptionId ? 'Modificar respuesta' : 'Guardar respuesta'}
+                    </button>
+                  </div>
+                </>
+              ) : null}
             </article>
           );
         })}
