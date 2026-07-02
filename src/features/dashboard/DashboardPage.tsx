@@ -1,15 +1,15 @@
 import { CalendarDays, ChevronLeft, ChevronRight, Target } from 'lucide-react';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { MatchCard } from '../../components/MatchCard';
 import { RecentPredictionResults, type SuperquotaResult } from '../../components/RecentPredictionResults';
+import { SpecialPredictionSummary } from '../../components/SpecialPredictionSummary';
 import { demoMatches, demoRanking, demoTeams, teamName } from '../../data/demoTournament';
 import { flagForTeamId } from '../../data/teamFlags';
 import { type DecidedBy, type GroupLetter, type Match, type MatchStatus, type Stage } from '../../domain/worldCupEngine';
 import { formatMadridDateTime, formatScore } from '../../lib/format';
 import { formatRankingPosition } from '../../lib/ranking';
 import { isSupabaseConfigured, supabase } from '../../lib/supabase';
-import { getSpecialPredictionDeadline, SPECIAL_PREDICTION_POINTS, type SpecialPredictionRow } from '../../lib/specialPredictions';
+import { getSpecialPredictionDeadline, type SpecialPredictionRow } from '../../lib/specialPredictions';
 import { SuperquotaPredictionPanel } from '../superquota/SuperquotaPredictionPanel';
 
 const MADRID_TIME_ZONE = 'Europe/Madrid';
@@ -174,21 +174,6 @@ function resultCardClassName(state: PredictionState): string {
   if (state === 'outcome') return 'table-card result-card result-card--outcome';
   if (state === 'miss') return 'table-card result-card result-card--miss';
   return 'table-card result-card';
-}
-
-function toCardPrediction(prediction: PredictionRow | undefined): { home: number; away: number; points: number } | undefined {
-  if (!prediction) return undefined;
-  return {
-    home: prediction.predicted_home_score,
-    away: prediction.predicted_away_score,
-    points: prediction.points_awarded,
-  };
-}
-
-function getDashboardPredictionGlow(match: Match, prediction: PredictionRow | undefined): 'locked' | 'missing' | 'modifiable' {
-  const isLocked = new Date(match.kickoffAt).getTime() <= Date.now();
-  if (isLocked) return 'locked';
-  return prediction ? 'modifiable' : 'missing';
 }
 
 function getMadridDateParts(value: string | Date): { year: number; month: number; day: number; hour: number } {
@@ -386,11 +371,15 @@ export function DashboardPage() {
     [currentPredictionDayKey, matches],
   );
   const predictedTodayMatches = useMemo(
-    () => todayPredictionMatches.filter((match) => Boolean(predictions[match.id])),
+    () => todayPredictionMatches.filter((match) => match.status === 'SCHEDULED' && Boolean(predictions[match.id])),
     [predictions, todayPredictionMatches],
   );
+  const liveTodayMatches = useMemo(
+    () => todayPredictionMatches.filter((match) => match.status === 'LIVE'),
+    [todayPredictionMatches],
+  );
   const missingTodayMatches = useMemo(
-    () => todayPredictionMatches.filter((match) => !predictions[match.id]),
+    () => todayPredictionMatches.filter((match) => match.status === 'SCHEDULED' && !predictions[match.id]),
     [predictions, todayPredictionMatches],
   );
   const recentMatches = useMemo(
@@ -523,23 +512,6 @@ export function DashboardPage() {
     window.setTimeout(updatePublicSliderState, 260);
   };
 
-  const renderSpecialPredictionSummary = (prediction: SpecialPredictionRow) => (
-    <div className="special-selection-list">
-      <span>
-        Campeón <b>{teamName(prediction.champion_team_id)}</b><small>+{SPECIAL_PREDICTION_POINTS.champion}</small>
-      </span>
-      <span>
-        Mejor jugador <b>{prediction.best_player_name}</b><small>+{SPECIAL_PREDICTION_POINTS.bestPlayer}</small>
-      </span>
-      <span>
-        Máximo goleador <b>{prediction.top_scorer_player_name}</b><small>+{SPECIAL_PREDICTION_POINTS.topScorer}</small>
-      </span>
-      <span>
-        Máximo asistente <b>{prediction.top_assist_player_name}</b><small>+{SPECIAL_PREDICTION_POINTS.topAssist}</small>
-      </span>
-    </div>
-  );
-
   return (
     <section className="page">
       <div className="page-heading">
@@ -565,8 +537,6 @@ export function DashboardPage() {
         </article>
       </div>
 
-      {userId ? <SuperquotaPredictionPanel matches={matches} now={now} userId={userId} variant="spotlight" /> : null}
-
       <RecentPredictionResults
         matches={matches}
         predictions={Object.fromEntries(Object.entries(predictions).map(([matchId, prediction]) => [matchId, {
@@ -583,10 +553,50 @@ export function DashboardPage() {
             <h2>Predicciones de hoy</h2>
             <span>{todayPredictionMatches.length}</span>
           </div>
+          {userId ? <SuperquotaPredictionPanel matches={matches} now={now} userId={userId} variant="spotlight" /> : null}
+          <section className="dashboard-matches-subsection" aria-labelledby="dashboard-matches-title">
+            <div className="dashboard-matches-subsection__heading">
+              <h3 id="dashboard-matches-title"><span aria-hidden="true">⚽</span> Partidos</h3>
+            </div>
           <div className="prediction-buckets">
+            {liveTodayMatches.length > 0 ? (
+              <section className="prediction-day">
+                <div className="section-heading section-heading--compact">
+                  <h4>En juego</h4>
+                  <span>{liveTodayMatches.length}</span>
+                </div>
+                <div className="match-list">
+                  {liveTodayMatches.map((match) => {
+                    const prediction = predictions[match.id];
+                    return (
+                      <article className="table-card dashboard-live-prediction" key={match.id}>
+                        <div className="dashboard-live-prediction__header">
+                          <span className="match-card__state match-card__state--locked">
+                            <span className="match-card__state-dot" />
+                            En juego
+                          </span>
+                          <time dateTime={match.kickoffAt}>{formatMadridDateTime(match.kickoffAt)}</time>
+                        </div>
+                        <div className="dashboard-live-prediction__body">
+                          <div className="dashboard-live-prediction__teams">
+                            <span><span aria-hidden="true">{flagForTeamId(match.homeTeamId)}</span> <strong>{compactTeamName(match.homeTeamId)}</strong></span>
+                            <b>{match.homeScore ?? 0}–{match.awayScore ?? 0}</b>
+                            <span><span aria-hidden="true">{flagForTeamId(match.awayTeamId)}</span> <strong>{compactTeamName(match.awayTeamId)}</strong></span>
+                          </div>
+                          <span className="dashboard-live-prediction__answer">
+                            Tu apuesta <b>{prediction ? `${prediction.predicted_home_score}–${prediction.predicted_away_score}` : 'Sin respuesta'}</b>
+                          </span>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              </section>
+            ) : null}
+
             <section className="prediction-day">
               <div className="section-heading section-heading--compact">
-                <h3>Ya hechas</h3>
+                <h4>Ya hechas</h4>
                 <span>{predictedTodayMatches.length}</span>
               </div>
               <div className="match-list">
@@ -628,19 +638,32 @@ export function DashboardPage() {
 
             <section className="prediction-day">
               <div className="section-heading section-heading--compact">
-                <h3>Por predecir</h3>
+                <h4>Por predecir</h4>
                 <span>{missingTodayMatches.length}</span>
               </div>
               <div className="match-list">
                 {missingTodayMatches.length > 0 ? (
                   missingTodayMatches.map((match) => (
-                    <MatchCard
-                      key={match.id}
-                      match={match}
-                      prediction={toCardPrediction(predictions[match.id])}
-                      glow={getDashboardPredictionGlow(match, predictions[match.id])}
-                      hideStatusPill
-                    />
+                    <article className="table-card dashboard-missing-prediction" key={match.id}>
+                      <div className="dashboard-missing-prediction__header">
+                        <span className="match-card__state match-card__state--missing">Disponible</span>
+                        <time dateTime={match.kickoffAt}>{formatMadridDateTime(match.kickoffAt)}</time>
+                      </div>
+                      <div className="dashboard-missing-prediction__body">
+                        <div className="dashboard-missing-prediction__teams">
+                          <span className="dashboard-missing-prediction__team">
+                            <span aria-hidden="true">{flagForTeamId(match.homeTeamId)}</span>
+                            <strong>{compactTeamName(match.homeTeamId)}</strong>
+                          </span>
+                          <span className="dashboard-missing-prediction__separator">–</span>
+                          <span className="dashboard-missing-prediction__team">
+                            <span aria-hidden="true">{flagForTeamId(match.awayTeamId)}</span>
+                            <strong>{compactTeamName(match.awayTeamId)}</strong>
+                          </span>
+                        </div>
+                        <Link className="dashboard-missing-prediction__button" to="/predicciones">Predecir</Link>
+                      </div>
+                    </article>
                   ))
                 ) : todayPredictionMatches.length > 0 ? (
                   <section className="table-card">
@@ -654,16 +677,11 @@ export function DashboardPage() {
               </div>
             </section>
           </div>
-
-          <section className="special-announcement">
-            <div className="special-announcement__heading">
-              <h2>Predicción especial</h2>
-              <strong className={`special-announcement__status${isSpecialClosed ? ' is-closed' : ''}`}>
-                {isSpecialClosed ? 'Cerrada' : 'Abierta'}
-              </strong>
-            </div>
-            {specialPrediction ? renderSpecialPredictionSummary(specialPrediction) : <p className="empty-state">Sin predicción guardada</p>}
           </section>
+
+          <div className="dashboard-special-prediction">
+            <SpecialPredictionSummary prediction={specialPrediction} isClosed={isSpecialClosed} />
+          </div>
         </section>
 
         <section className="prediction-section dashboard-public-section">

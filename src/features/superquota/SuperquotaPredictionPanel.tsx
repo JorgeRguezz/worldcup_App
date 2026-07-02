@@ -44,6 +44,7 @@ type SuperquotaPredictionPanelProps = {
   now: number;
   userId: string;
   variant?: 'full' | 'spotlight';
+  showResolvedResults?: boolean;
 };
 
 function matchLabel(match: Match | undefined): string {
@@ -51,7 +52,13 @@ function matchLabel(match: Match | undefined): string {
   return `${teamName(match.homeTeamId)} vs ${teamName(match.awayTeamId)}`;
 }
 
-export function SuperquotaPredictionPanel({ matches, now, userId, variant = 'full' }: SuperquotaPredictionPanelProps) {
+export function SuperquotaPredictionPanel({
+  matches,
+  now,
+  userId,
+  variant = 'full',
+  showResolvedResults = true,
+}: SuperquotaPredictionPanelProps) {
   const [markets, setMarkets] = useState<SuperquotaMarketRow[]>([]);
   const [optionsByMarket, setOptionsByMarket] = useState<Record<string, SuperquotaOptionRow[]>>({});
   const [savedSelections, setSavedSelections] = useState<Record<string, string>>({});
@@ -150,9 +157,9 @@ export function SuperquotaPredictionPanel({ matches, now, userId, variant = 'ful
     setMessage(wasSaved ? 'Respuesta de supercuota modificada.' : 'Respuesta de supercuota guardada.');
   };
 
-  const displayedResolvedMarkets = variant === 'full' ? resolvedMarkets : [];
+  const displayedResolvedMarkets = variant === 'full' && showResolvedResults ? resolvedMarkets : [];
   if (!schemaAvailable) return null;
-  if (openMarkets.length === 0 && displayedResolvedMarkets.length === 0) {
+  if (variant === 'full' && openMarkets.length === 0 && displayedResolvedMarkets.length === 0) {
     return message ? <p className="superquota-load-error" role="alert">{message}</p> : null;
   }
 
@@ -164,7 +171,11 @@ export function SuperquotaPredictionPanel({ matches, now, userId, variant = 'ful
         <span className="superquota-predictions__icon"><Sparkles size={20} /></span>
         <div>
           <div className="superquota-predictions__title-row">
-            <h2 id="superquota-predictions-title">Supercuotas</h2>
+            {variant === 'spotlight' ? (
+              <h3 id="superquota-predictions-title">Supercuotas</h3>
+            ) : (
+              <h2 id="superquota-predictions-title">Supercuotas</h2>
+            )}
             {variant === 'spotlight' ? (
               <Link className="primary-link superquota-predictions__cta" to="/predicciones">
                 Predicciones <ArrowRight size={16} />
@@ -175,6 +186,10 @@ export function SuperquotaPredictionPanel({ matches, now, userId, variant = 'ful
       </div>
 
       {message ? <p className="superquota-predictions__message" role="status" aria-live="polite">{message}</p> : null}
+
+      {displayedMarkets.length === 0 ? (
+        <p className="empty-state">No hay supercuotas disponibles para los partidos de hoy.</p>
+      ) : null}
 
       <div className="superquota-predictions__grid">
         {displayedMarkets.map((market) => {

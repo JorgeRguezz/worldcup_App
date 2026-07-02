@@ -2,8 +2,9 @@ import { PencilLine, Save } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { MatchCard } from '../../components/MatchCard';
-import { RecentPredictionResults } from '../../components/RecentPredictionResults';
+import { RecentPredictionResults, type SuperquotaResult } from '../../components/RecentPredictionResults';
 import { SearchSelect } from '../../components/SearchSelect';
+import { SpecialPredictionSummary } from '../../components/SpecialPredictionSummary';
 import { TeamProfile } from '../../components/TeamProfile';
 import { PLAYER_CANDIDATES } from '../../data/playerCandidates';
 import { demoMatches, teamName } from '../../data/demoTournament';
@@ -46,6 +47,25 @@ type PredictionRow = {
   predicted_away_score: number;
   predicted_advancing_team_id: string | null;
   points_awarded: number;
+};
+
+type SuperquotaPredictionResultRow = {
+  market_id: string;
+  option_id: string;
+  points_awarded: number;
+  is_void: boolean;
+};
+
+type SuperquotaMarketResultRow = {
+  id: string;
+  title: string;
+  correct_option_id: string | null;
+  resolved_at: string | null;
+};
+
+type SuperquotaOptionResultRow = {
+  id: string;
+  label: string;
 };
 
 type DraftPrediction = {
@@ -211,6 +231,9 @@ export function PredictionsPage() {
   const [drafts, setDrafts] = useState<Record<string, DraftPrediction>>({});
   const [savedPredictions, setSavedPredictions] = useState<Record<string, DraftPrediction>>({});
   const [specialPrediction, setSpecialPrediction] = useState<SpecialPredictionRow | null>(null);
+  const [superquotaPredictionResults, setSuperquotaPredictionResults] = useState<SuperquotaPredictionResultRow[]>([]);
+  const [superquotaMarketResults, setSuperquotaMarketResults] = useState<SuperquotaMarketResultRow[]>([]);
+  const [superquotaOptionResults, setSuperquotaOptionResults] = useState<SuperquotaOptionResultRow[]>([]);
   const [specialDraft, setSpecialDraft] = useState<SpecialPredictionDraft>({
     champion: '',
     bestPlayer: '',
@@ -254,6 +277,9 @@ export function PredictionsPage() {
         { data: matchRows, error: matchError },
         { data: predictionRows, error: predictionError },
         { data: specialPredictionRow, error: specialPredictionError },
+        { data: superquotaPredictionRows, error: superquotaPredictionError },
+        { data: superquotaMarketRows, error: superquotaMarketError },
+        { data: superquotaOptionRows, error: superquotaOptionError },
       ] = await Promise.all([
         supabase!
           .from('matches')
@@ -272,6 +298,17 @@ export function PredictionsPage() {
           )
           .eq('user_id', userResult.user.id)
           .maybeSingle(),
+        supabase!
+          .from('superquota_predictions')
+          .select('market_id, option_id, points_awarded, is_void')
+          .eq('user_id', userResult.user.id),
+        supabase!
+          .from('superquota_markets')
+          .select('id, title, correct_option_id, resolved_at')
+          .eq('status', 'RESOLVED'),
+        supabase!
+          .from('superquota_options')
+          .select('id, label'),
       ]);
 
       if (!isMounted) return;
@@ -314,6 +351,16 @@ export function PredictionsPage() {
         });
       }
 
+      if (!superquotaPredictionError) {
+        setSuperquotaPredictionResults((superquotaPredictionRows ?? []) as SuperquotaPredictionResultRow[]);
+      }
+      if (!superquotaMarketError) {
+        setSuperquotaMarketResults((superquotaMarketRows ?? []) as SuperquotaMarketResultRow[]);
+      }
+      if (!superquotaOptionError) {
+        setSuperquotaOptionResults((superquotaOptionRows ?? []) as SuperquotaOptionResultRow[]);
+      }
+
       setIsLoading(false);
     }
 
@@ -346,6 +393,25 @@ export function PredictionsPage() {
     ].filter((bucket) => bucket.matches.length > 0);
   }, [orderedMatches.available]);
   const availablePredictionMatches = useMemo(() => availableBuckets.flatMap((bucket) => bucket.matches), [availableBuckets]);
+  const recentSuperquotaResults = useMemo<SuperquotaResult[]>(() => {
+    const marketsById = new Map(superquotaMarketResults.map((market) => [market.id, market]));
+    const optionsById = new Map(superquotaOptionResults.map((option) => [option.id, option]));
+
+    return superquotaPredictionResults.flatMap((prediction) => {
+      const market = marketsById.get(prediction.market_id);
+      const selectedOption = optionsById.get(prediction.option_id);
+      const correctOption = market?.correct_option_id ? optionsById.get(market.correct_option_id) : null;
+      if (prediction.is_void || !market?.resolved_at || !selectedOption || !correctOption) return [];
+      return [{
+        id: prediction.market_id,
+        title: market.title,
+        selectedAnswer: selectedOption.label,
+        correctAnswer: correctOption.label,
+        points: prediction.points_awarded,
+        resolvedAt: market.resolved_at,
+      }];
+    });
+  }, [superquotaMarketResults, superquotaOptionResults, superquotaPredictionResults]);
   const pastPredictionBuckets = useMemo(
     () => buildPastPredictionBuckets(orderedMatches.past, matches),
     [matches, orderedMatches.past],
@@ -770,14 +836,6 @@ export function PredictionsPage() {
       {message ? <p className="form-message">{message}</p> : null}
       {isLoading ? <p className="empty-state">Cargando partidos y predicciones...</p> : null}
 
-      {userId ? <SuperquotaPredictionPanel matches={matches} now={now} userId={userId} /> : null}
-
-      {selectedTeamId ? (
-        <div ref={teamProfileRef}>
-          <TeamProfile teamId={selectedTeamId} matches={matches} onClose={() => setSelectedTeamId(null)} />
-        </div>
-      ) : null}
-
       <RecentPredictionResults
         matches={matches}
         predictions={Object.fromEntries(
@@ -790,14 +848,22 @@ export function PredictionsPage() {
             },
           ]),
         )}
+        superquotaResults={recentSuperquotaResults}
       />
+
+      {userId ? <SuperquotaPredictionPanel matches={matches} now={now} userId={userId} showResolvedResults={false} /> : null}
+
+      {selectedTeamId ? (
+        <div ref={teamProfileRef}>
+          <TeamProfile teamId={selectedTeamId} matches={matches} onClose={() => setSelectedTeamId(null)} />
+        </div>
+      ) : null}
 
       <section className="prediction-section">
         <div className="section-heading">
           <h2>Disponibles</h2>
           <span>{availablePredictionMatches.length}</span>
         </div>
-        {renderSpecialPredictionSection()}
         {availableBuckets.length > 0 ? (
           <div className="prediction-buckets">
             {availableBuckets.map((bucket) => (
@@ -814,6 +880,8 @@ export function PredictionsPage() {
           <p className="empty-state">No hay predicciones disponibles ahora mismo.</p>
         )}
       </section>
+
+      <SpecialPredictionSummary prediction={specialPrediction} isClosed={specialClosed} />
 
       <section className="prediction-section">
         <div className="section-heading">

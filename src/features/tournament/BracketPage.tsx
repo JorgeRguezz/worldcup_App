@@ -1,5 +1,5 @@
-import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { demoMatches, demoTeams } from '../../data/demoTournament';
 import { flagForTeamId } from '../../data/teamFlags';
 import {
@@ -417,24 +417,367 @@ function BracketMatchCard({ match, teamNames }: { match: BracketDisplayMatch; te
   );
 }
 
+export type BracketPoint = { x: number; y: number; angle: number };
+type BracketView = { scale: number; x: number; y: number };
+type BracketGesture =
+  | { kind: 'drag'; pointerId: number; startX: number; startY: number; startView: BracketView }
+  | { kind: 'pinch'; startDistance: number; startView: BracketView };
+
+const BOARD_SIZE = 1000;
+const BOARD_CENTER = BOARD_SIZE / 2;
+const PARTICIPANT_RADIUS: Record<DisplayStage, number> = {
+  R32: 445,
+  R16: 348,
+  QF: 258,
+  SF: 178,
+  FINAL: 112,
+};
+const WINNER_RADIUS: Record<DisplayStage, number> = {
+  R32: PARTICIPANT_RADIUS.R16,
+  R16: PARTICIPANT_RADIUS.QF,
+  QF: PARTICIPANT_RADIUS.SF,
+  SF: PARTICIPANT_RADIUS.FINAL,
+  FINAL: 0,
+};
+const stageLegend = [
+  { label: '16avos', color: '#e65a4f' },
+  { label: 'Octavos', color: '#e5b93f' },
+  { label: 'Cuartos', color: '#3c9b70' },
+  { label: 'Semis', color: '#4d6fc4' },
+  { label: 'Final', color: '#f2d17a' },
+];
+const branchColors = ['#e65a4f', '#e5b93f', '#3c9b70', '#4d6fc4'];
+
+function pointOnRing(radius: number, angle: number): BracketPoint {
+  const radians = (angle * Math.PI) / 180;
+  return {
+    x: BOARD_CENTER + Math.cos(radians) * radius,
+    y: BOARD_CENTER + Math.sin(radians) * radius,
+    angle,
+  };
+}
+
+function sourceDependencies(matchNumber: number): BracketDependency[] {
+  return bracketDependencies
+    .filter((dependency) => dependency.matchNumber === matchNumber && dependency.sourceType === 'winner')
+    .sort((a, b) => (a.side === 'home' ? -1 : b.side === 'home' ? 1 : 0));
+}
+
+export function roundOf32Order(): number[] {
+  const visit = (matchNumber: number): number[] => {
+    if (stageMatchNumbers.R32.includes(matchNumber)) return [matchNumber];
+    return sourceDependencies(matchNumber).flatMap((dependency) => visit(dependency.sourceMatchNumber));
+  };
+  return visit(104);
+}
+
+export function leafSlotsByMatch(): Map<number, number[]> {
+  const order = roundOf32Order();
+  const slots = new Map<number, number[]>();
+  order.forEach((matchNumber, index) => slots.set(matchNumber, [index * 2, index * 2 + 1]));
+
+  const resolve = (matchNumber: number): number[] => {
+    const existing = slots.get(matchNumber);
+    if (existing) return existing;
+    const resolved = sourceDependencies(matchNumber).flatMap((dependency) => resolve(dependency.sourceMatchNumber));
+    slots.set(matchNumber, resolved);
+    return resolved;
+  };
+  [...stageMatchNumbers.R16, ...stageMatchNumbers.QF, ...stageMatchNumbers.SF, ...stageMatchNumbers.FINAL].forEach(resolve);
+  return slots;
+}
+
+function angleForLeafSlot(slot: number): number {
+  return -90 + (slot + 0.5) * (360 / 32);
+}
+
+function midpointAngle(slots: number[]): number {
+  return angleForLeafSlot((Math.min(...slots) + Math.max(...slots)) / 2);
+}
+
+function participantPoint(
+  match: BracketDisplayMatch,
+  side: MatchSide,
+  order: number[],
+  slots: Map<number, number[]>,
+): BracketPoint {
+  if (match.stage === 'R32') {
+    const matchIndex = order.indexOf(match.fifaMatchNumber);
+    return pointOnRing(PARTICIPANT_RADIUS.R32, angleForLeafSlot(matchIndex * 2 + (side === 'home' ? 0 : 1)));
+  }
+  const source = bracketDependencies.find(
+    (dependency) => dependency.matchNumber === match.fifaMatchNumber && dependency.side === side && dependency.sourceType === 'winner',
+  );
+  const sourceSlots = source ? slots.get(source.sourceMatchNumber) : slots.get(match.fifaMatchNumber);
+  return pointOnRing(PARTICIPANT_RADIUS[match.stage], midpointAngle(sourceSlots ?? [0]));
+}
+
+function winnerPoint(match: BracketDisplayMatch, slots: Map<number, number[]>): BracketPoint {
+  if (match.stage === 'FINAL') return { x: BOARD_CENTER, y: BOARD_CENTER, angle: 0 };
+  return pointOnRing(WINNER_RADIUS[match.stage], midpointAngle(slots.get(match.fifaMatchNumber) ?? [0]));
+}
+
+function matchJunctionPoint(match: BracketDisplayMatch, slots: Map<number, number[]>): BracketPoint {
+  const participantRadius = PARTICIPANT_RADIUS[match.stage];
+  const nextRadius = WINNER_RADIUS[match.stage];
+  const junctionRadius = nextRadius === 0 ? 82 : participantRadius - (participantRadius - nextRadius) * 0.22;
+  return pointOnRing(junctionRadius, midpointAngle(slots.get(match.fifaMatchNumber) ?? [0]));
+}
+
+export function rotatedRightAngleElbow(from: BracketPoint, to: BracketPoint): BracketPoint {
+  const radians = (to.angle * Math.PI) / 180;
+  const radial = { x: Math.cos(radians), y: Math.sin(radians) };
+  const tangent = { x: -radial.y, y: radial.x };
+  const fromCentered = { x: from.x - BOARD_CENTER, y: from.y - BOARD_CENTER };
+  const toCentered = { x: to.x - BOARD_CENTER, y: to.y - BOARD_CENTER };
+  const fromTangentOffset = fromCentered.x * tangent.x + fromCentered.y * tangent.y;
+  const toRadialOffset = toCentered.x * radial.x + toCentered.y * radial.y;
+
+  return {
+    x: BOARD_CENTER + radial.x * toRadialOffset + tangent.x * fromTangentOffset,
+    y: BOARD_CENTER + radial.y * toRadialOffset + tangent.y * fromTangentOffset,
+    angle: to.angle,
+  };
+}
+
+function rotatedRightAnglePath(from: BracketPoint, to: BracketPoint): string {
+  const elbow = rotatedRightAngleElbow(from, to);
+  return `M ${from.x} ${from.y} L ${elbow.x} ${elbow.y} L ${to.x} ${to.y}`;
+}
+
+function branchColor(slots: number[]): string {
+  const average = (Math.min(...slots) + Math.max(...slots)) / 2;
+  return branchColors[Math.min(3, Math.floor(average / 8))];
+}
+
+function RadialBracket({ matches, teams }: { matches: Match[]; teams: Team[] }) {
+  const displayMatches = useMemo(() => buildBracketMatches(matches, teams), [matches, teams]);
+  const matchesByNumber = useMemo(
+    () => new Map(displayMatches.map((match) => [match.fifaMatchNumber, match])),
+    [displayMatches],
+  );
+  const teamNames = useMemo(() => new Map(teams.map((team) => [team.id, team.name])), [teams]);
+  const order = useMemo(roundOf32Order, []);
+  const slots = useMemo(leafSlotsByMatch, []);
+  const [selectedMatch, setSelectedMatch] = useState<BracketDisplayMatch | null>(null);
+  const [view, setView] = useState<BracketView>({ scale: 1, x: 0, y: 0 });
+  const [hasInteracted, setHasInteracted] = useState(false);
+  const viewRef = useRef(view);
+  const pointersRef = useRef(new Map<number, { x: number; y: number }>());
+  const gestureRef = useRef<BracketGesture | null>(null);
+
+  useEffect(() => {
+    viewRef.current = view;
+  }, [view]);
+
+  const participantTeam = (match: BracketDisplayMatch, side: MatchSide): TeamId | null => {
+    const directTeam = side === 'home' ? match.homeTeamId : match.awayTeamId;
+    if (directTeam) return directTeam;
+    const source = bracketDependencies.find(
+      (dependency) => dependency.matchNumber === match.fifaMatchNumber && dependency.side === side && dependency.sourceType === 'winner',
+    );
+    return source ? matchesByNumber.get(source.sourceMatchNumber)?.winnerTeamId ?? null : null;
+  };
+
+  const clampView = (next: BracketView): BracketView => {
+    const scale = Math.min(4, Math.max(1, next.scale));
+    const limit = (scale - 1) * 360;
+    return {
+      scale,
+      x: Math.min(limit, Math.max(-limit, next.x)),
+      y: Math.min(limit, Math.max(-limit, next.y)),
+    };
+  };
+
+  const pointerDistance = () => {
+    const points = [...pointersRef.current.values()];
+    return points.length < 2 ? 0 : Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
+  };
+
+  const onPointerDown = (event: ReactPointerEvent<SVGSVGElement>) => {
+    setHasInteracted(true);
+    event.currentTarget.setPointerCapture(event.pointerId);
+    pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (pointersRef.current.size === 1) {
+      gestureRef.current = {
+        kind: 'drag',
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        startView: viewRef.current,
+      };
+    } else if (pointersRef.current.size === 2) {
+      gestureRef.current = { kind: 'pinch', startDistance: pointerDistance(), startView: viewRef.current };
+    }
+  };
+
+  const onPointerMove = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (!pointersRef.current.has(event.pointerId)) return;
+    pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    const gesture = gestureRef.current;
+    if (!gesture) return;
+
+    if (gesture.kind === 'pinch' && pointersRef.current.size >= 2) {
+      const distance = pointerDistance();
+      setView(clampView({ ...gesture.startView, scale: gesture.startView.scale * (distance / gesture.startDistance) }));
+      return;
+    }
+    if (gesture.kind === 'drag' && pointersRef.current.size === 1 && gesture.pointerId === event.pointerId) {
+      const bounds = event.currentTarget.getBoundingClientRect();
+      const unitScale = BOARD_SIZE / Math.max(1, bounds.width);
+      setView(clampView({
+        ...gesture.startView,
+        x: gesture.startView.x + (event.clientX - gesture.startX) * unitScale,
+        y: gesture.startView.y + (event.clientY - gesture.startY) * unitScale,
+      }));
+    }
+  };
+
+  const onPointerUp = (event: ReactPointerEvent<SVGSVGElement>) => {
+    pointersRef.current.delete(event.pointerId);
+    const remaining = [...pointersRef.current.entries()];
+    if (remaining.length === 1) {
+      const [pointerId, point] = remaining[0];
+      gestureRef.current = {
+        kind: 'drag',
+        pointerId,
+        startX: point.x,
+        startY: point.y,
+        startView: viewRef.current,
+      };
+    } else {
+      gestureRef.current = null;
+    }
+  };
+
+  const renderMatchDetail = (match: BracketDisplayMatch) => {
+    const homeName = match.homeTeamId ? teamNames.get(match.homeTeamId) ?? match.homeTeamId : 'Por definir';
+    const awayName = match.awayTeamId ? teamNames.get(match.awayTeamId) ?? match.awayTeamId : 'Por definir';
+    const score = match.homeScore !== null && match.awayScore !== null ? `${match.homeScore}–${match.awayScore}` : 'vs';
+    return (
+      <aside className="radial-bracket-detail" aria-live="polite">
+        <button type="button" className="icon-button" onClick={() => setSelectedMatch(null)} aria-label="Cerrar detalle"><X size={18} /></button>
+        <span>{match.displayCode}{match.kickoffAt ? ` · ${formatMadridDateTime(match.kickoffAt)}` : ''}</span>
+        <strong>{flagForTeamId(match.homeTeamId)} {homeName} <b>{score}</b> {flagForTeamId(match.awayTeamId)} {awayName}</strong>
+      </aside>
+    );
+  };
+
+  return (
+    <section className="radial-bracket-shell">
+      <div className="radial-bracket-legend" aria-label="Rondas del cuadro">
+        {stageLegend.map((stage) => <span key={stage.label}><i style={{ background: stage.color }} />{stage.label}</span>)}
+      </div>
+      <div className="radial-bracket-viewport">
+        <svg
+          className="radial-bracket"
+          viewBox={`0 0 ${BOARD_SIZE} ${BOARD_SIZE}`}
+          role="img"
+          aria-label="Cuadro completo de eliminatorias. Pellizca para ampliar y arrastra para moverte."
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerCancel={onPointerUp}
+        >
+          <defs>
+            <radialGradient id="trophyGlow">
+              <stop offset="0%" stopColor="#e8bd55" stopOpacity="0.34" />
+              <stop offset="100%" stopColor="#e8bd55" stopOpacity="0" />
+            </radialGradient>
+            <filter id="flagShadow" x="-40%" y="-40%" width="180%" height="180%">
+              <feDropShadow dx="0" dy="3" stdDeviation="4" floodColor="#000000" floodOpacity="0.38" />
+            </filter>
+          </defs>
+          <g transform={`translate(${view.x} ${view.y}) translate(${BOARD_CENTER} ${BOARD_CENTER}) scale(${view.scale}) translate(${-BOARD_CENTER} ${-BOARD_CENTER})`}>
+            {[PARTICIPANT_RADIUS.R32, PARTICIPANT_RADIUS.R16, PARTICIPANT_RADIUS.QF, PARTICIPANT_RADIUS.SF, PARTICIPANT_RADIUS.FINAL].map((radius) => (
+              <circle className="radial-bracket__ring" cx={BOARD_CENTER} cy={BOARD_CENTER} r={radius} key={radius} />
+            ))}
+            {displayMatches.filter((match) => match.stage !== 'FINAL').map((match) => {
+              const target = winnerPoint(match, slots);
+              const junction = matchJunctionPoint(match, slots);
+              const matchSlots = slots.get(match.fifaMatchNumber) ?? [0];
+              const color = branchColor(matchSlots);
+              const isComplete = match.status === 'FINAL' && Boolean(match.winnerTeamId);
+              return (
+                <g key={`fork-${match.fifaMatchNumber}`}>
+                  {(['home', 'away'] as MatchSide[]).map((side) => {
+                    const from = participantPoint(match, side, order, slots);
+                    const teamId = participantTeam(match, side);
+                    const isWinner = isComplete && Boolean(teamId) && match.winnerTeamId === teamId;
+                    const isLoser = isComplete && Boolean(teamId) && match.winnerTeamId !== teamId;
+                    return (
+                      <path
+                        className={`radial-bracket__branch${isWinner ? ' is-winner' : ''}${isLoser ? ' is-loser' : ''}`}
+                        d={rotatedRightAnglePath(from, junction)}
+                        key={`path-${match.fifaMatchNumber}-${side}`}
+                        style={isWinner ? { stroke: color } : undefined}
+                      />
+                    );
+                  })}
+                  <path
+                    className={`radial-bracket__stem${isComplete ? ' is-complete' : ''}`}
+                    d={`M ${junction.x} ${junction.y} L ${target.x} ${target.y}`}
+                    style={isComplete ? { stroke: color } : undefined}
+                  />
+                  <circle
+                    className={`radial-bracket__junction${isComplete ? ' is-complete' : ''}`}
+                    cx={junction.x}
+                    cy={junction.y}
+                    r="5"
+                    style={isComplete ? { fill: color } : undefined}
+                  />
+                </g>
+              );
+            })}
+            <circle className="radial-bracket__center-glow" cx={BOARD_CENTER} cy={BOARD_CENTER} r="146" />
+            <circle className="radial-bracket__center" cx={BOARD_CENTER} cy={BOARD_CENTER} r="94" />
+            <image href="/world-cup-trophy.webp" x="405" y="437" width="190" height="126" preserveAspectRatio="xMidYMid meet" />
+            {displayMatches.flatMap((match) =>
+              (['home', 'away'] as MatchSide[]).map((side) => {
+                const point = participantPoint(match, side, order, slots);
+                const teamId = participantTeam(match, side);
+                const isFinal = match.status === 'FINAL' && Boolean(match.winnerTeamId);
+                const isWinner = isFinal && teamId === match.winnerTeamId;
+                const isLoser = isFinal && Boolean(teamId) && teamId !== match.winnerTeamId;
+                return (
+                  <g
+                    className={`radial-bracket-node${teamId ? ' has-team' : ' is-empty'}${isWinner ? ' is-winner' : ''}${isLoser ? ' is-loser' : ''}`}
+                    key={`node-${match.fifaMatchNumber}-${side}`}
+                    transform={`translate(${point.x} ${point.y})`}
+                    onClick={() => setSelectedMatch(match)}
+                    role="button"
+                    tabIndex={0}
+                  >
+                    <title>{teamId ? teamNames.get(teamId) ?? teamId : 'Cruce por definir'}</title>
+                    <circle r={teamId ? 27 : 7} />
+                    {teamId ? <text aria-hidden="true" textAnchor="middle" dominantBaseline="central">{flagForTeamId(teamId)}</text> : null}
+                  </g>
+                );
+              }),
+            )}
+          </g>
+        </svg>
+        {!hasInteracted ? <p className="radial-bracket-hint">Pellizca para ampliar · arrastra para moverte</p> : null}
+        {selectedMatch ? renderMatchDetail(selectedMatch) : null}
+      </div>
+    </section>
+  );
+}
+
 export function BracketPage() {
   const [teams, setTeams] = useState<Team[]>(isSupabaseConfigured ? [] : demoTeams);
   const [matches, setMatches] = useState<Match[]>(isSupabaseConfigured ? [] : demoMatches);
   const [isLoading, setIsLoading] = useState(isSupabaseConfigured);
   const [message, setMessage] = useState('');
-  const [activeStageIndex, setActiveStageIndex] = useState(0);
-  const activeStage: BracketStage = stages[activeStageIndex];
-  const teamNames = useMemo(() => new Map(teams.map((team) => [team.id, team.name])), [teams]);
-  const activeMatches = useMemo(() => buildRoundMatches(activeStage.id, matches, teams), [activeStage.id, matches, teams]);
 
   useEffect(() => {
     if (!isSupabaseConfigured || !supabase) return;
 
     let isMounted = true;
 
-    async function loadBracket() {
-      setIsLoading(true);
-      setMessage('');
+    async function loadBracket(showLoading = true) {
+      if (showLoading) setIsLoading(true);
+      if (showLoading) setMessage('');
 
       const [{ data: teamRows, error: teamError }, { data: matchRows, error: matchError }] = await Promise.all([
         supabase!
@@ -459,23 +802,28 @@ export function BracketPage() {
         setMatches(((matchRows ?? []) as MatchRow[]).map(toMatch));
       }
 
-      setIsLoading(false);
+      if (showLoading) setIsLoading(false);
     }
 
     void loadBracket();
+    const channel = supabase
+      .channel('official-bracket-matches')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, () => void loadBracket(false))
+      .subscribe();
+    const refreshInterval = window.setInterval(() => void loadBracket(false), 30_000);
+
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') void loadBracket(false);
+    };
+    document.addEventListener('visibilitychange', refreshWhenVisible);
 
     return () => {
       isMounted = false;
+      window.clearInterval(refreshInterval);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+      void supabase?.removeChannel(channel);
     };
   }, []);
-
-  const goToPreviousStage = () => {
-    setActiveStageIndex((current) => Math.max(0, current - 1));
-  };
-
-  const goToNextStage = () => {
-    setActiveStageIndex((current) => Math.min(stages.length - 1, current + 1));
-  };
 
   return (
     <section className="page">
@@ -489,45 +837,7 @@ export function BracketPage() {
       {isLoading ? <p className="mode-note">Cargando cuadro desde Supabase...</p> : null}
       {message ? <p className="empty-state">{message}</p> : null}
 
-      <div className="bracket-round-slider" aria-label="Rondas del cuadro">
-        <button className="icon-button bracket-round-slider__arrow" type="button" onClick={goToPreviousStage} disabled={activeStageIndex === 0} aria-label="Ver ronda anterior">
-          <ChevronLeft size={18} />
-        </button>
-        <div className="bracket-round-tabs" role="tablist" aria-label="Selecciona una ronda">
-          {stages.map((stage, index) => (
-            <button
-              aria-selected={stage.id === activeStage.id}
-              className={stage.id === activeStage.id ? 'bracket-round-tab bracket-round-tab--active' : 'bracket-round-tab'}
-              key={stage.id}
-              onClick={() => setActiveStageIndex(index)}
-              role="tab"
-              type="button"
-            >
-              {stage.label}
-            </button>
-          ))}
-        </div>
-        <button
-          className="icon-button bracket-round-slider__arrow"
-          type="button"
-          onClick={goToNextStage}
-          disabled={activeStageIndex === stages.length - 1}
-          aria-label="Ver siguiente ronda"
-        >
-          <ChevronRight size={18} />
-        </button>
-      </div>
-
-      <div className="bracket-board bracket-board--active" aria-live="polite">
-        <section className="bracket-column">
-          <h2>{activeStage.label}</h2>
-          {activeMatches.length > 0 ? (
-            activeMatches.map((match) => <BracketMatchCard key={match.key} match={match} teamNames={teamNames} />)
-          ) : (
-            <p className="empty-state">Esta ronda se completará cuando avance el torneo.</p>
-          )}
-        </section>
-      </div>
+      <RadialBracket matches={matches} teams={teams} />
     </section>
   );
 }
